@@ -5,8 +5,11 @@ package ldapAuth
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -119,7 +122,14 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	LogConfigParams(config)
 
 	// Create new session with CacheKey and CacheTimeout.
-	store = sessions.NewCookieStore([]byte(config.CacheKey))
+	// TODO: dynamically generated rand number could cause decryption errors
+	// when a new instance gets created with a new key
+	encKey := make([]byte, 32) // 32 byte key -> AES-256 mode
+	_, err := rand.Read(encKey)
+	if err != nil {
+		return nil, err
+	}
+	store = sessions.NewCookieStore([]byte(config.CacheKey), encKey)
 	store.Options = &sessions.Options{
 		HttpOnly: true,
 		MaxAge:   int(config.CacheTimeout),
@@ -157,7 +167,21 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
+	// #### Token ####
+	// code_verifier provided -> opaque token requested
+	code_verifier := req.FormValue("code_verifier")
+	pkceOK := false
+	if code_verifier != "" {
+		if code_challenge, ok := session.Values["code_challenge"]; ok {
+			h256CodeVerifier := crypto.Hash.New(crypto.SHA256)
+			_, err := h256CodeVerifier.Write([]byte(code_verifier))
+			if err != nil {
+				// TODO: hashing error
+			}
+			pkceOK = base64.RawURLEncoding.EncodeToString(h256CodeVerifier.Sum(nil)) == code_challenge
+		}
+	}
+	// ###############
 		if session.Values["username"] == username {
 			LoggerDEBUG.Printf("Session token Valid! Passing request...")
 			ServeAuthenicated(la, session, rw, req)
@@ -205,6 +229,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	LoggerINFO.Printf("Authentication succeeded")
 
 	// Set user as authenticated.
+	session.Values["cc"] = code_challenge // must be encrypted
 	session.Values["username"] = username
 	session.Values["ldap-dn"] = entry.DN
 	session.Values["ldap-cn"] = entry.GetAttributeValue("cn")
@@ -324,7 +349,6 @@ func LdapCheckAllowedUsers(conn *ldap.Conn, config *Config, entry *ldap.Entry, u
 
 // LdapCheckUserGroups check if the is user is a member of any of the AllowedGroups list
 func LdapCheckUserGroups(conn *ldap.Conn, config *Config, entry *ldap.Entry, username string) (bool, error) {
-
 	if len(config.AllowedGroups) == 0 {
 		return false, nil
 	}
