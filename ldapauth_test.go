@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/wiltonsr/ldapAuth"
+	"github.com/pp23/ldapAuth"
 )
 
 func TestDemo(t *testing.T) {

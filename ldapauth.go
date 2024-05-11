@@ -217,11 +217,20 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		state := req.FormValue("state")
 		if response_type != "code" {
 			// error. see rfc6749 4.1.2.1
+			ResponseError(rw, req, redirect_uri, state, errors.New("invalid_request"), "response_type not set to 'code'")
 			return
 		}
 		if client_id == "" {
 			// error. see rfc6749 4.1.2.1
+			ResponseError(rw, req, redirect_uri, state, errors.New("invalid_request"), "client_id not set")
 			return
+		}
+		// TODO: check whether the client_id is known and get the registered redirect_uri(s) of this client
+		//       if redirect_uris were registered, the set redirect_uri parameter value needs to be one of
+		//       the registered redirect_uris
+		if redirect_uri == "" {
+			// TODO: take registered redirect_uri
+			redirect_uri = "http://localhost/token"
 		}
 
 		LoggerINFO.Printf("redirect_uri: %s", redirect_uri)
@@ -267,8 +276,10 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// HTTP/1.1 302 Found
 		// Location: https://client.example.com/cb?code=SplxlOBeZQQYbYS6WxSbIA
 		//           &state=xyz
-
-		ResponseAuthCode(rw, req, la.config, state)
+		// store authcodes with expiration timestamp, redirect_uri, scope in a server side cache
+		code := "abc" // TODO: generate valid auth code with code_challenge encrypted in it
+		ResponseAuthCode(rw, req, la.config, code, state, redirect_uri)
+		// TODO: cache auth code together with client
 		return
 	}
 
@@ -511,6 +522,48 @@ func LdapCheckUserGroups(conn *ldap.Conn, config *Config, entry *ldap.Entry, use
 	}
 
 	return found, err
+}
+
+func ResponseError(w http.ResponseWriter, req *http.Request, redirect_uri string, state string, err error, errDescr string) {
+	LoggerDEBUG.Println(err)
+	errMsg := strings.Trim(err.Error(), "\x00")
+	location, uriErr := url.Parse(redirect_uri)
+	// no redirect_uri, response the error without redirect
+	if uriErr != nil || location.RawPath == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(fmt.Sprintf("%d %s\nError: %s - %s\n", http.StatusBadRequest, http.StatusText(http.StatusBadRequest), errMsg, errDescr)))
+		return
+	}
+	v := url.Values{}
+	v.Add("error", errMsg)
+	if state != "" {
+		v.Add("state", state)
+	}
+	if errDescr != "" {
+		v.Add("error_description", errDescr)
+	}
+	location.RawQuery = v.Encode()
+	w.Header().Add("Location", location.String())
+	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+// ResponseAuthCode responses with an auth code
+func ResponseAuthCode(w http.ResponseWriter, req *http.Request, config *Config, code string, state string, redirect_uri string) error {
+	location, err := url.Parse(redirect_uri)
+	LoggerDEBUG.Println("Location: " + location.String())
+	if err != nil {
+		return err
+	}
+	v := url.Values{}
+	v.Add("code", code)
+	if state != "" {
+		v.Add("state", state)
+	}
+	location.RawQuery = v.Encode()
+	LoggerDEBUG.Println("location.RawQuery: ", location.RawQuery)
+	w.Header().Add("Location", location.String())
+	w.WriteHeader(http.StatusTemporaryRedirect)
+	return nil
 }
 
 // RequireAuth set Auth request.
