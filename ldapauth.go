@@ -186,6 +186,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// #### Auth ####
 	// OAuth PKCE
 	code_challenge := req.FormValue("code_challenge")
+	LoggerDEBUG.Printf("code_challenge: %s", code_challenge)
 	if code_challenge == "" && !pkceOK {
 		err = errors.New("code_challenge required")
 		// TODO: response with invalid_request
