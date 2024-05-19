@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -200,6 +201,81 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	}
 	if len(respBody) != 0 {
 		t.Fatalf("Expected no body, got %s [%v]", string(respBody), len(respBody))
+	}
+	mockLdapServer.Close()
+	wg.Wait()
+}
+
+func TestTokenResponseSuccess(t *testing.T) {
+	expectedHeaders := map[string]string{
+		"Content-Type": "application/json",
+	}
+	excpectedRedirectURI := "https://localhost:1234/token"
+	expectedCodeChallenge := "challenge123"
+	expectedState := "123"
+	req := httptest.NewRequest(
+		"POST",
+		"http://localhost/auth?state="+expectedState+"&redirect_uri="+excpectedRedirectURI+"&client_id=abc&response_type=code&code_challenge="+expectedCodeChallenge,
+		nil,
+	)
+	w := httptest.NewRecorder()
+	cfg := ldapAuth.CreateConfig()
+	ctx := context.Background()
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
+	cfg.LogLevel = "DEBUG"
+	cfg.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.URL)
+	mockLdapServer := MockTCPServer{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		mockLdapServer.Run(
+			1389,
+			mockBindResponse,
+			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
+		)
+	}()
+	cfg.Port = 1389
+	handler, err := ldapAuth.New(ctx, next, cfg, "ldapAuth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth("user02", "secret")
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	locationURL, err := resp.Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authCode := locationURL.Query().Get("code")
+	locationURL.RawFragment = ""
+	locationURL.RawQuery = "" // no query in token request url, but in the body
+	reqBodyValues := url.Values{}
+	reqBodyValues.Add("grant_type", "authorization_code")
+	reqBodyValues.Add("code", authCode)
+	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
+	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
+	reqRedirect := httptest.NewRequest(
+		"POST",
+		locationURL.String(),
+		strings.NewReader(reqBodyValues.Encode()),
+	)
+	b, _ := io.ReadAll(reqRedirect.Body)
+	t.Log(string(b))
+	handler.ServeHTTP(w, reqRedirect)
+	respToken := w.Result()
+	if respToken.Status != "200 OK" {
+		t.Fatalf("Expected token response status \"200 OK\", got \"%s\"", respToken.Status)
+	}
+	for expectedHeaderKey, expectedHeaderValue := range expectedHeaders {
+		if headerValue, ok := respToken.Header[expectedHeaderKey]; !ok {
+			t.Fatalf("%s header not found in token response", expectedHeaderKey)
+		} else {
+			if headerValue[0] != expectedHeaderValue {
+				t.Fatalf("Expected value \"%s\" for header \"%s\", got \"%s\"", expectedHeaderValue, expectedHeaderKey, headerValue[0])
+			}
+		}
 	}
 	mockLdapServer.Close()
 	wg.Wait()
