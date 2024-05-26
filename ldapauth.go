@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/gorilla/sessions"
+	"github.com/pp23/ldapAuth/internal/oauth2"
 )
 
 // nolint
@@ -184,21 +185,22 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// ###############
 
 	// #### Auth ####
-	// OAuth PKCE
-	code_challenge := req.FormValue("code_challenge")
-	LoggerDEBUG.Printf("code_challenge: %s", code_challenge)
-	if code_challenge == "" && !pkceOK {
-		err = errors.New("code_challenge required")
-		// TODO: response with invalid_request
-		/*
-					the authorization endpoint MUST return the authorization
-			   	error response with the "error" value set to "invalid_request".  The
-			   	"error_description" or the response of "error_uri" SHOULD explain the
-			   	nature of error, e.g., code challenge required.
-		*/
-		RequireAuth(rw, req, la.config, err)
-		return
-	} else { // code_challenge set, check for remaining auth request parameters, authorize resource owner and issue auth code
+	if oauth2.IsAuthCodeRequest(req) {
+		// authcode requested
+
+		authCode, err := oauth2.FromRequest(req)
+		if err != nil {
+			// TODO: response with invalid_request
+			/*
+						the authorization endpoint MUST return the authorization
+					error response with the "error" value set to "invalid_request".  The
+					"error_description" or the response of "error_uri" SHOULD explain the
+					nature of error, e.g., code challenge required.
+			*/
+			LoggerERROR.Printf("%s", err)
+			RequireAuth(rw, req, la.config, err)
+			return
+		}
 		// rfc6749 4.1.1
 		// response_type 		- REQUIRED. MUST be "code"
 		// client_id 				- REQUIRED. client identifier
@@ -210,33 +212,17 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		//     &redirect_uri=https%3A%2F%2Fclient%2Eexample%2Ecom%2Fcb HTTP/1.1
 		// Host: server.example.com
 
-		response_type := req.FormValue("response_type")
-		client_id := req.FormValue("client_id")
-		// rfc6749 3.1.2.3: If client registered no redirection URI, the client MUST include a redirect_uri in the auth request
-		redirect_uri := req.FormValue("redirect_uri")
-		scope := req.FormValue("scope")
-		state := req.FormValue("state")
-		if response_type != "code" {
-			// error. see rfc6749 4.1.2.1
-			ResponseError(rw, req, redirect_uri, state, errors.New("invalid_request"), "response_type not set to 'code'")
-			return
-		}
-		if client_id == "" {
-			// error. see rfc6749 4.1.2.1
-			ResponseError(rw, req, redirect_uri, state, errors.New("invalid_request"), "client_id not set")
-			return
-		}
 		// TODO: check whether the client_id is known and get the registered redirect_uri(s) of this client
 		//       if redirect_uris were registered, the set redirect_uri parameter value needs to be one of
 		//       the registered redirect_uris
-		if redirect_uri == "" {
-			// TODO: take registered redirect_uri
-			redirect_uri = "http://localhost/token"
-		}
-
-		LoggerINFO.Printf("redirect_uri: %s", redirect_uri)
-		LoggerINFO.Printf("scope: %s", scope)
-		LoggerINFO.Printf("state: %s", state)
+		// if redirect_uri == "" {
+		// 	// TODO: take registered redirect_uri
+		// 	redirect_uri = "http://localhost/token"
+		// }
+		//
+		// LoggerINFO.Printf("redirect_uri: %s", redirect_uri)
+		// LoggerINFO.Printf("scope: %s", scope)
+		// LoggerINFO.Printf("state: %s", state)
 		// all required parameters valid. Authenticate resource owner.
 		conn, err := Connect(la.config)
 		if err != nil {
@@ -278,12 +264,11 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// Location: https://client.example.com/cb?code=SplxlOBeZQQYbYS6WxSbIA
 		//           &state=xyz
 		// store authcodes with expiration timestamp, redirect_uri, scope in a server side cache
-		code := "abc" // TODO: generate valid auth code with code_challenge encrypted in it
-		ResponseAuthCode(rw, req, la.config, code, state, redirect_uri)
+		code, err := authCode.Code() // TODO: generate valid auth code with code_challenge encrypted in it
+		ResponseAuthCode(rw, req, la.config, code, authCode.State, authCode.RedirectURI.String())
 		// TODO: cache auth code together with client
 		return
 	}
-
 	// ##############
 
 	if auth, ok := session.Values["authenticated"].(bool); ok && auth && pkceOK {
@@ -334,7 +319,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	LoggerINFO.Printf("Authentication succeeded")
 
 	// Set user as authenticated.
-	session.Values["cc"] = code_challenge // must be encrypted
+	// session.Values["cc"] = code_challenge // must be encrypted
 	session.Values["username"] = username
 	session.Values["ldap-dn"] = entry.DN
 	session.Values["ldap-cn"] = entry.GetAttributeValue("cn")
