@@ -15,10 +15,11 @@ import (
 
 	ber "github.com/go-asn1-ber/asn1-ber"
 	"github.com/pp23/ldapAuth"
+	"github.com/pp23/ldapAuth/internal/ldapIdp"
 )
 
 func TestDemo(t *testing.T) {
-	cfg := ldapAuth.CreateConfig()
+	cfg := ldapIdp.CreateConfig()
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
@@ -144,7 +145,7 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 		nil,
 	)
 	w := httptest.NewRecorder()
-	cfg := ldapAuth.CreateConfig()
+	cfg := ldapIdp.CreateConfig()
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
 	cfg.LogLevel = "DEBUG"
@@ -219,7 +220,7 @@ func TestTokenResponseSuccess(t *testing.T) {
 		nil,
 	)
 	w := httptest.NewRecorder()
-	cfg := ldapAuth.CreateConfig()
+	cfg := ldapIdp.CreateConfig()
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
 	cfg.LogLevel = "DEBUG"
