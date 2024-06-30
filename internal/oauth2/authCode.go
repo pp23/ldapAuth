@@ -36,7 +36,7 @@ func IsAuthCodeRequest(req *http.Request) bool {
 }
 
 // Create an AuthCode instance from a http request. Returns an error if required parameters missing.
-func FromRequest(req *http.Request) (*AuthCode, error) {
+func AuthCodeFromRequest(req *http.Request) (*AuthCode, error) {
 	authCode := AuthCode{
 		ResponseType:  req.FormValue("response_type"),
 		ClientID:      req.FormValue("client_id"),
