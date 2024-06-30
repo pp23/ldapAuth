@@ -118,7 +118,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if oauth2.IsAuthCodeRequest(req) {
 		// authcode requested
 
-		authCode, err := oauth2.FromRequest(req)
+		authCode, err := oauth2.AuthCodeFromRequest(req)
 		if err != nil {
 			// TODO: response with invalid_request
 			/*

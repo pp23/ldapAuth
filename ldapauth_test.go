@@ -207,9 +207,17 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestTokenResponseSuccess(t *testing.T) {
+func TestOpaqueTokenResponseSuccess(t *testing.T) {
 	expectedHeaders := map[string]string{
 		"Content-Type": "application/json",
+		// authorization server MUST include the HTTP "Cache-Control"
+		// response header field [RFC2616] with a value of "no-store" in any
+		// response containing tokens, credentials, or other sensitive
+		// information
+		"Cache-Control": "no-store",
+		// as well as the "Pragma" response header field [RFC2616]
+		// with a value of "no-cache"
+		"Pragma": "no-cache",
 	}
 	excpectedRedirectURI := "https://localhost:1234/token"
 	expectedCodeChallenge := "challenge123"
