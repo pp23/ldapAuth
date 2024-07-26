@@ -80,8 +80,24 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var err error
 
-	if req.FormValue("grant_type") == "authorization_code" {
-		// opaque token requested
+	// #### Token ####
+	// opaque token requested?
+	if oauth2.IsOpaqueTokenRequest(req) {
+		opaqueToken, err := oauth2.OpaqueTokenFromRequest(req)
+		if err != nil {
+			log.Printf("opaque token error: %v", err)
+			RequireAuth(rw, req, la.config, err)
+			return
+		}
+		jsonToken, err := opaqueToken.AccessTokenJson()
+		if err != nil {
+			log.Printf("opaque token error: %v", err)
+			RequireAuth(rw, req, la.config, err)
+			return
+		}
+		log.Printf("AccessToken: %s", string(jsonToken))
+		ResponseToken(rw, req, la.config, jsonToken)
+		return
 	}
 
 	session, _ := store.Get(req, la.config.CacheCookieName)
@@ -115,6 +131,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// ###############
 
 	// #### Auth ####
+	// auth code requested?
 	if oauth2.IsAuthCodeRequest(req) {
 		// authcode requested
 
@@ -307,6 +324,16 @@ func ResponseError(w http.ResponseWriter, req *http.Request, redirect_uri string
 	location.RawQuery = v.Encode()
 	w.Header().Add("Location", location.String())
 	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+// ResponseAuthCode responses with an auth code
+func ResponseToken(w http.ResponseWriter, req *http.Request, config *ldapIdp.Config, token []byte) error {
+	w.Header().Add("Cache-Control", "no-store")
+	w.Header().Add("Pragma", "no-cache")
+	w.Header().Add("Content-Type", "application/json;charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(token)
+	return nil
 }
 
 // ResponseAuthCode responses with an auth code
