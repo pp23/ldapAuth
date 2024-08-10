@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/gorilla/sessions"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
@@ -38,6 +39,7 @@ type LdapAuth struct {
 	next   http.Handler
 	name   string
 	config *ldapIdp.Config
+	cache  *memcache.Client
 }
 
 // New created a new LdapAuth plugin.
@@ -68,6 +70,7 @@ func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name st
 		name:   name,
 		next:   next,
 		config: config,
+		cache:  memcache.New("127.0.0.1:11211"), // TODO: make it configurable
 	}, nil
 }
 
@@ -114,7 +117,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// #### Token ####
+	// #### TODO: PKCE ####
 	// code_verifier provided -> opaque token requested
 	code_verifier := req.FormValue("code_verifier")
 	pkceOK := false
@@ -135,7 +138,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if oauth2.IsAuthCodeRequest(req) {
 		// authcode requested
 
-		authCode, err := oauth2.AuthCodeFromRequest(req)
+		authCodeRequest, err := oauth2.AuthCodeFromRequest(req)
 		if err != nil {
 			// TODO: response with invalid_request
 			/*
@@ -211,9 +214,21 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// Location: https://client.example.com/cb?code=SplxlOBeZQQYbYS6WxSbIA
 		//           &state=xyz
 		// store authcodes with expiration timestamp, redirect_uri, scope in a server side cache
-		code, err := authCode.Code() // TODO: generate valid auth code with code_challenge encrypted in it
-		ResponseAuthCode(rw, req, la.config, code, authCode.State, authCode.RedirectURI.String())
+		code, err := authCodeRequest.Code() // TODO: generate valid auth code with code_challenge encrypted in it
 		// TODO: cache auth code together with client
+		// we use memcached as it is easy to use, efficient and has no complex license
+		// as we store authcodes and tokens, it would be ok
+		// if the client needs to reauthenticate
+		// if memcached failed to return the authcode/token due to internal error
+		errCache := la.cache.Set(&memcache.Item{
+			Key:   "code",
+			Value: []byte("clientid: " + authCodeRequest.ClientID),
+		})
+		if errCache != nil {
+			log.Print(errCache)
+			// TODO: Response error
+		}
+		ResponseAuthCode(rw, req, la.config, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
 		return
 	}
 	// ##############
