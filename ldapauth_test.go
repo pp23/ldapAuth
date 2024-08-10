@@ -5,11 +5,13 @@ package ldapAuth_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -68,10 +70,30 @@ func bytesToHexString(bytes []byte) string {
 	return buf.String()
 }
 
+// global cache
+var mockMemcache map[string][]byte
+
+func mockMemCachedMsgHandler(bytes []byte, conn net.Conn) {
+	cmd := strings.Split(string(bytes), " ")[0]
+	key := strings.Split(string(bytes), " ")[1]
+	value := bytes[len(cmd)+len(key)+10:] // +10 for spaces and padding
+	if cmd == "set" {
+		mockMemcache[key] = value
+		fmt.Printf("%s: [%s]: %v (%s)", cmd, key, value, string(value))
+		return
+	}
+	if cmd == "get" {
+		val := mockMemcache[key]
+		fmt.Printf("%s: [%s]: %v (%s)", cmd, key, val, string(val))
+	}
+	fmt.Printf("Unknown memcached command: %s", string(bytes))
+}
+
 type MockTCPServer struct {
-	l     net.Listener
-	conns []net.Conn
-	stop  bool
+	hostport string
+	l        net.Listener
+	conns    []net.Conn
+	stop     bool
 }
 
 type TesTCPPServer interface {
@@ -79,24 +101,27 @@ type TesTCPPServer interface {
 	Close()
 }
 
-func (ldapServer *MockTCPServer) Run(port uint16, msgHandler func(bytes []byte, conn net.Conn), errHandler func(error)) error {
-	ldapServer.stop = false
-	l, err := net.Listen("tcp", ":1389")
+func (mockTcpServer *MockTCPServer) Run(port uint16, msgHandler func(bytes []byte, conn net.Conn), errHandler func(error)) error {
+	mockTcpServer.stop = false
+	mockTcpServer.hostport = ":" + strconv.Itoa(int(port))
+	l, err := net.Listen("tcp", mockTcpServer.hostport)
 	if err != nil {
+		errHandler(err)
 		return err
 	}
-	ldapServer.l = l
-	for !ldapServer.stop {
+	mockTcpServer.l = l
+	for !mockTcpServer.stop {
 		conn, err := l.Accept()
 		if err != nil {
 			// check if server was stopped anyway (the error resulted likely from a use of closed network connection)
-			if ldapServer.stop {
+			if mockTcpServer.stop {
+				// errHandler(err) // usually not an error
 				break
 			}
 			errHandler(err)
 			continue
 		}
-		ldapServer.conns = append(ldapServer.conns, conn)
+		mockTcpServer.conns = append(mockTcpServer.conns, conn)
 		defer conn.Close()
 		b := make([]byte, 1024)
 		n := 1
@@ -104,6 +129,7 @@ func (ldapServer *MockTCPServer) Run(port uint16, msgHandler func(bytes []byte, 
 			n, err = conn.Read(b)
 			if err != nil {
 				if err == io.EOF {
+					// errHandler(err) // usually not an error
 					break
 				}
 				errHandler(err)
@@ -115,10 +141,14 @@ func (ldapServer *MockTCPServer) Run(port uint16, msgHandler func(bytes []byte, 
 	return nil
 }
 
-func (ldapServer *MockTCPServer) Close() {
-	ldapServer.stop = true
-	ldapServer.l.Close()
-	for _, c := range ldapServer.conns {
+func (mockTcpServer *MockTCPServer) Close() {
+	mockTcpServer.stop = true
+	if mockTcpServer.l == nil {
+		fmt.Printf("Listener was already nil of %s", mockTcpServer.hostport)
+	} else {
+		mockTcpServer.l.Close()
+	}
+	for _, c := range mockTcpServer.conns {
 		c.Close()
 	}
 }
@@ -153,8 +183,20 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	cfg.URL = "ldap://localhost"
 	t.Log("MockLdapServer URL: " + cfg.URL)
 	mockLdapServer := MockTCPServer{}
+	mockMemcachedServer := MockTCPServer{}
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2)
+	// memcachedServer
+	mockMemcache = make(map[string][]byte)
+	go func() {
+		defer wg.Done()
+		mockMemcachedServer.Run(
+			11211,
+			mockMemCachedMsgHandler,
+			func(err error) { t.Error("Error: ", err) },
+		)
+	}()
+	// LDAPServer
 	go func() {
 		defer wg.Done()
 		mockLdapServer.Run(
@@ -207,6 +249,7 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	if len(respBody) != 0 {
 		t.Fatalf("Expected no body, got %s [%v]", string(respBody), len(respBody))
 	}
+	mockMemcachedServer.Close()
 	mockLdapServer.Close()
 	wg.Wait()
 }
