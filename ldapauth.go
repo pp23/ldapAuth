@@ -3,10 +3,12 @@
 package ldapAuth
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -36,10 +38,13 @@ var (
 
 // LdapAuth Struct plugin.
 type LdapAuth struct {
-	next   http.Handler
-	name   string
-	config *ldapIdp.Config
-	cache  *memcache.Client
+	next       http.Handler
+	name       string
+	config     *ldapIdp.Config
+	cache      *memcache.Client
+	gobEncoder *gob.Encoder
+	gobDecoder *gob.Decoder
+	gobByteBuf *bytes.Buffer
 }
 
 // New created a new LdapAuth plugin.
@@ -66,11 +71,17 @@ func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name st
 		Secure:   config.CacheCookieSecure,
 	}
 
+	gob.Register(oauth2.AuthCode{})
+	var buf bytes.Buffer
+
 	return &LdapAuth{
-		name:   name,
-		next:   next,
-		config: config,
-		cache:  memcache.New("127.0.0.1:11211"), // TODO: make it configurable
+		name:       name,
+		next:       next,
+		config:     config,
+		cache:      memcache.New("127.0.0.1:11211"), // TODO: make it configurable
+		gobEncoder: gob.NewEncoder(&buf),
+		gobDecoder: gob.NewDecoder(&buf),
+		gobByteBuf: &buf,
 	}, nil
 }
 
@@ -86,13 +97,33 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// #### Token ####
 	// opaque token requested?
 	if oauth2.IsOpaqueTokenRequest(req) {
-		opaqueToken, err := oauth2.OpaqueTokenFromRequest(req)
+		opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
 		if err != nil {
 			log.Printf("opaque token error: %v", err)
 			RequireAuth(rw, req, la.config, err)
 			return
 		}
-		jsonToken, err := opaqueToken.AccessTokenJson()
+		var authCodeRequest oauth2.AuthCode
+		la.gobByteBuf.Reset()
+		item, cacheErr := la.cache.Get("code" + opaqueTokenRequest.Code)
+		if cacheErr != nil {
+			log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
+			RequireAuth(rw, req, la.config, cacheErr)
+			return
+		}
+		_, bufErr := la.gobByteBuf.Write(item.Value)
+		if bufErr != nil {
+			log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
+			RequireAuth(rw, req, la.config, bufErr)
+			return
+		}
+		gobErr := la.gobDecoder.Decode(&authCodeRequest)
+		if gobErr != nil {
+			log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
+			RequireAuth(rw, req, la.config, gobErr)
+			return
+		}
+		jsonToken, err := opaqueTokenRequest.AccessTokenJson()
 		if err != nil {
 			log.Printf("opaque token error: %v", err)
 			RequireAuth(rw, req, la.config, err)
@@ -102,6 +133,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		ResponseToken(rw, req, la.config, jsonToken)
 		return
 	}
+	// ##############
 
 	session, _ := store.Get(req, la.config.CacheCookieName)
 	LoggerDEBUG.Printf("Session details: %v", session)
@@ -220,9 +252,15 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// as we store authcodes and tokens, it would be ok
 		// if the client needs to reauthenticate
 		// if memcached failed to return the authcode/token due to internal error
+		la.gobByteBuf.Reset()
+		gobErr := la.gobEncoder.Encode(authCodeRequest)
+		if gobErr != nil {
+			log.Print(gobErr)
+			// TODO: Response error
+		}
 		errCache := la.cache.Set(&memcache.Item{
-			Key:   "code",
-			Value: []byte("clientid: " + authCodeRequest.ClientID),
+			Key:   "code" + code,
+			Value: la.gobByteBuf.Bytes(),
 		})
 		if errCache != nil {
 			log.Print(errCache)

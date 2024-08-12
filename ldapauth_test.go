@@ -3,18 +3,22 @@
 package ldapAuth_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	ber "github.com/go-asn1-ber/asn1-ber"
 	"github.com/pp23/ldapAuth"
@@ -70,23 +74,73 @@ func bytesToHexString(bytes []byte) string {
 	return buf.String()
 }
 
-// global cache
-var mockMemcache map[string][]byte
+// partly copied from https://github.com/bradfitz/gomemcache
+type serverItem struct {
+	flags   uint32
+	data    []byte
+	exp     time.Time // or zero value for no expiry
+	casUniq uint64
+}
 
-func mockMemCachedMsgHandler(bytes []byte, conn net.Conn) {
-	cmd := strings.Split(string(bytes), " ")[0]
-	key := strings.Split(string(bytes), " ")[1]
-	value := bytes[len(cmd)+len(key)+10:] // +10 for spaces and padding
-	if cmd == "set" {
-		mockMemcache[key] = value
-		fmt.Printf("%s: [%s]: %v (%s)", cmd, key, value, string(value))
-		return
+// global cache
+var mockMemcache map[string]serverItem
+
+func mockMemCachedMsgHandler(br *bufio.Reader, bw *bufio.Writer) error {
+	writeRx := regexp.MustCompile(`^(set|add|replace|append|prepend|cas) (\S+) (\d+) (\d+) (\d+)(?: (\S+))?( noreply)?\r\n`)
+	for {
+		b, err := br.ReadSlice('\n')
+		if err != nil {
+			fmt.Printf("Read from connection: %v\r\n", err)
+			return nil
+		}
+		line := string(b)
+		fmt.Printf("string: %s", line)
+		fmt.Printf("bytes2hex: %s", bytesToHexString(b))
+
+		if strings.HasPrefix(line, "gets") {
+			key := strings.Fields(strings.TrimPrefix(line, "gets "))[0]
+			fmt.Printf("%s: [%s]", "gets", key)
+			if val, ok := mockMemcache[key]; ok {
+				fmt.Printf("%s: [%s]: %s", "gets", key, bytesToHexString(val.data))
+				fmt.Fprintf(bw, "VALUE %s %d %d %d\r\n", key, val.flags, len(val.data), val.casUniq)
+				bw.Write(val.data)
+				bw.Write([]byte("\r\n"))
+				bw.Write([]byte("END\r\n"))
+				bw.Flush()
+			} else {
+				fmt.Printf("Key not found: %s. Current cache: %v", key, mockMemcache)
+				for k := range mockMemcache {
+					fmt.Printf("%s == %s : %v", key, k, key == k)
+				}
+			}
+			continue
+		}
+		if m := writeRx.FindStringSubmatch(line); m != nil {
+			verb, key, flagsStr, exptimeStr, lenStr, casUniq, noReply := m[1], m[2], m[3], m[4], m[5], m[6], strings.TrimSpace(m[7])
+			flags, _ := strconv.ParseUint(flagsStr, 10, 32)
+			exptimeVal, _ := strconv.ParseInt(exptimeStr, 10, 64)
+			itemLen, _ := strconv.ParseInt(lenStr, 10, 32)
+			fmt.Printf("got %q flags=%q exp=%d %d len=%d cas=%q noreply=%q", verb, key, flags, exptimeVal, itemLen, casUniq, noReply)
+			body := make([]byte, itemLen+2)
+			_, err := io.ReadFull(br, body)
+			if err != nil {
+				fmt.Printf("Could not read message body: %v", err)
+				return err
+			}
+			fmt.Printf("body: %s", bytesToHexString(body[:itemLen]))
+			mockMemcache[key] = serverItem{
+				flags:   uint32(flags),
+				data:    body[:itemLen],
+				casUniq: 1,
+				exp:     time.Unix(exptimeVal, 0),
+			}
+			fmt.Printf("%s: [%s]: %v (%s)", verb, key, body, string(body))
+			bw.Write([]byte("STORED\r\n"))
+			bw.Flush()
+			continue
+		}
+		fmt.Printf("Unknown memcached command: %s", line)
 	}
-	if cmd == "get" {
-		val := mockMemcache[key]
-		fmt.Printf("%s: [%s]: %v (%s)", cmd, key, val, string(val))
-	}
-	fmt.Printf("Unknown memcached command: %s", string(bytes))
 }
 
 type MockTCPServer struct {
@@ -97,11 +151,19 @@ type MockTCPServer struct {
 }
 
 type TesTCPPServer interface {
-	Run(port uint16, msgHandler func(bytes []byte, conn net.Conn), errHandler func(error)) error
+	Run(
+		port uint16,
+		msgHandler func(br *bufio.Reader, bw *bufio.Writer),
+		errHandler func(error),
+	) error
 	Close()
 }
 
-func (mockTcpServer *MockTCPServer) Run(port uint16, msgHandler func(bytes []byte, conn net.Conn), errHandler func(error)) error {
+func (mockTcpServer *MockTCPServer) Run(
+	port uint16,
+	msgHandler func(br *bufio.Reader, bw *bufio.Writer) error,
+	errHandler func(error),
+) error {
 	mockTcpServer.stop = false
 	mockTcpServer.hostport = ":" + strconv.Itoa(int(port))
 	l, err := net.Listen("tcp", mockTcpServer.hostport)
@@ -121,22 +183,21 @@ func (mockTcpServer *MockTCPServer) Run(port uint16, msgHandler func(bytes []byt
 			errHandler(err)
 			continue
 		}
+		fmt.Printf("New connection: %s", conn.RemoteAddr())
 		mockTcpServer.conns = append(mockTcpServer.conns, conn)
 		defer conn.Close()
-		b := make([]byte, 1024)
-		n := 1
-		for n > 0 {
-			n, err = conn.Read(b)
-			if err != nil {
-				if err == io.EOF {
-					// errHandler(err) // usually not an error
-					break
-				}
-				errHandler(err)
-				continue
+		br := bufio.NewReader(conn)
+		bw := bufio.NewWriter(conn)
+		msgErr := msgHandler(br, bw)
+		if msgErr != nil {
+			if !errors.Is(msgErr, io.EOF) {
+				fmt.Printf("msgHandler error %v", msgErr)
+				errHandler(msgErr)
+			} else {
+				fmt.Printf("Ignoring error %v", msgErr)
 			}
-			msgHandler(b, conn)
 		}
+		conn.Close()
 	}
 	return nil
 }
@@ -153,7 +214,7 @@ func (mockTcpServer *MockTCPServer) Close() {
 	}
 }
 
-func mockBindResponse(bytes []byte, conn net.Conn) {
+func mockBindResponse(br *bufio.Reader, bw *bufio.Writer) error {
 	// build the LDAP Bind Response packet
 	pkt := ber.Encode(ber.ClassApplication, ber.TypeConstructed, 1, nil, "Bind Response")
 	pkt.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 0, "resultCode"))
@@ -163,7 +224,9 @@ func mockBindResponse(bytes []byte, conn net.Conn) {
 	envelope.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 1, "MessageID"))
 	envelope.AppendChild(pkt)
 
-	conn.Write(envelope.Bytes())
+	bw.Write(envelope.Bytes())
+	bw.Flush()
+	return nil
 }
 
 func TestAuthCodeResponseSuccess(t *testing.T) {
@@ -187,7 +250,8 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 	// memcachedServer
-	mockMemcache = make(map[string][]byte)
+	t.Log("Start MockMemcachedServer")
+	mockMemcache = make(map[string]serverItem)
 	go func() {
 		defer wg.Done()
 		mockMemcachedServer.Run(
@@ -285,8 +349,19 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 	cfg.URL = "ldap://localhost"
 	t.Log("MockLdapServer URL: " + cfg.URL)
 	mockLdapServer := MockTCPServer{}
+	mockMemcachedServer := MockTCPServer{}
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2)
+	// memcachedServer
+	mockMemcache = make(map[string]serverItem)
+	go func() {
+		defer wg.Done()
+		mockMemcachedServer.Run(
+			11211,
+			mockMemCachedMsgHandler,
+			func(err error) { t.Error("Error: ", err) },
+		)
+	}()
 	go func() {
 		defer wg.Done()
 		mockLdapServer.Run(
@@ -365,7 +440,7 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		t.Errorf("Expected expiration of at least 600s, got %v", resObj["expires_in"].(float64))
 	}
 	// TODO: test whether the token is not a JWT as we expect only an opaque token
-
+	mockMemcachedServer.Close()
 	mockLdapServer.Close()
 	wg.Wait()
 }

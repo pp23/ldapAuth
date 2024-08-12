@@ -48,7 +48,7 @@ func IsOpaqueTokenRequest(req *http.Request) bool {
 }
 
 // Create an OpaqueToken from HTTP request
-func OpaqueTokenFromRequest(req *http.Request) (*OpaqueToken, error) {
+func OpaqueTokenFromRequest(req *http.Request) (*OpaqueTokenRequest, error) {
 	err := req.ParseForm()
 	if err != nil {
 		log.Print(err)
@@ -73,16 +73,17 @@ func OpaqueTokenFromRequest(req *http.Request) (*OpaqueToken, error) {
 	// TODO: unauthorized_client, client not authorized to use this authorization grant type
 	// TODO: unsupported_grant_type, auth grant type not supported by server
 	// TODO: invalid_scope, requested scope is invalid
-	return &OpaqueToken{
+	return &opaqueTokenRequest, nil
+}
+
+func (tokenRequest *OpaqueTokenRequest) AccessTokenJson() ([]byte, error) {
+	token := OpaqueToken{
 		AccessToken:  "TODO-UUID-OR-WHATEVER-0000000000000000000000000000000000000000",
 		TokenType:    "bearer",
 		ExpiresIn:    600,
 		RefreshToken: "TODO",
 		Scope:        "TODO",
-	}, nil
-}
-
-func (token *OpaqueToken) AccessTokenJson() ([]byte, error) {
+	}
 	b, err := json.Marshal(token)
 	if err != nil {
 		return []byte{}, err
