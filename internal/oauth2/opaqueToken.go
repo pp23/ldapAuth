@@ -1,6 +1,8 @@
 package oauth2
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -64,9 +66,7 @@ func OpaqueTokenFromRequest(req *http.Request) (*OpaqueTokenRequest, error) {
 		return nil, fmt.Errorf("invalid_request")
 	}
 
-	// authentcating a webapp client which runs of the users machine:
-	// intermediate client secret is encrypted in auth code
-	// check client_id and decrypted client secret from auth code with cached values
+	// TODO: authenticate client which performs a basic auth (https://www.rfc-editor.org/rfc/rfc6749#section-4.1.3)
 
 	// TODO: invalid_client, client auth failed
 	// TODO: invalid_grant, provided authorization grant invalid
@@ -76,17 +76,71 @@ func OpaqueTokenFromRequest(req *http.Request) (*OpaqueTokenRequest, error) {
 	return &opaqueTokenRequest, nil
 }
 
-func (tokenRequest *OpaqueTokenRequest) AccessTokenJson() ([]byte, error) {
-	token := OpaqueToken{
-		AccessToken:  "TODO-UUID-OR-WHATEVER-0000000000000000000000000000000000000000",
-		TokenType:    "bearer",
-		ExpiresIn:    600,
-		RefreshToken: "TODO",
-		Scope:        "TODO",
-	}
-	b, err := json.Marshal(token)
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+const (
+	letterIdxBits = 6
+	letterIdxMask = 1<<letterIdxBits - 1
+	letterIdxMax  = 63 / letterIdxBits
+)
+
+func randSecureNumber(bytesLen int) (uint64, error) {
+	bRand := make([]byte, bytesLen)
+	_, err := rand.Read(bRand)
 	if err != nil {
-		return []byte{}, err
+		log.Printf("Could not read from rand source: %v", err)
+		return 0, err
 	}
-	return b, nil
+	var randUInt64 uint64
+	errBin := binary.Read(bytes.NewBuffer(bRand), binary.LittleEndian, &randUInt64)
+	if errBin != nil {
+		log.Printf("Could not convert byte-array (length: %d bytes) to uint64: %v", bytesLen, errBin)
+		return 0, errBin
+	}
+	return randUInt64, nil
+}
+
+func randString(n int) (string, error) {
+	b := make([]byte, n)
+	secureNum, err := randSecureNumber(8)
+	if err != nil {
+		return "", err
+	}
+	for i, cache, remain := n-1, secureNum, letterIdxMax; i >= 0; {
+		if remain == 0 {
+			secNum, err := randSecureNumber(8)
+			if err != nil {
+				return "", err
+			}
+			cache, remain = secNum, letterIdxMax
+		}
+		if idx := int(cache & letterIdxMask); idx < len(letters) {
+			b[i] = letters[idx]
+			i--
+		}
+		cache >>= letterIdxBits
+		remain--
+	}
+	return string(b), nil
+}
+
+func (tokenRequest *OpaqueTokenRequest) AccessToken(expSeconds uint64) (*OpaqueToken, error) {
+	at, errAt := randString(36)
+	if errAt != nil {
+		return nil, errAt
+	}
+	rt, errRt := randString(36)
+	if errRt != nil {
+		return nil, errRt
+	}
+	return &OpaqueToken{
+		AccessToken:  at,
+		TokenType:    "bearer",
+		ExpiresIn:    expSeconds,
+		RefreshToken: rt,
+		Scope:        "TODO",
+	}, nil
+}
+
+func (token *OpaqueToken) Json() ([]byte, error) {
+	return json.Marshal(token)
 }
