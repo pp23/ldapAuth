@@ -123,14 +123,20 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			RequireAuth(rw, req, la.config, gobErr)
 			return
 		}
-		jsonToken, err := opaqueTokenRequest.AccessTokenJson()
+		accessToken, err := opaqueTokenRequest.AccessToken(600)
 		if err != nil {
 			log.Printf("opaque token error: %v", err)
 			RequireAuth(rw, req, la.config, err)
 			return
 		}
-		log.Printf("AccessToken: %s", string(jsonToken))
-		ResponseToken(rw, req, la.config, jsonToken)
+		jsonAT, errJson := accessToken.Json()
+		if errJson != nil {
+			log.Printf("Could not get JSON of AccessToken: %v", errJson)
+			RequireAuth(rw, req, la.config, errJson)
+			return
+		}
+		log.Printf("AccessToken: %s", string(jsonAT))
+		ResponseToken(rw, req, la.config, jsonAT)
 		return
 	}
 	// ##############
