@@ -1,13 +1,13 @@
 package oauth2
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+
+	"github.com/pp23/ldapAuth/internal/utils"
 )
 
 // rfc6749 4.1.3 Access Token Request
@@ -76,59 +76,12 @@ func OpaqueTokenFromRequest(req *http.Request) (*OpaqueTokenRequest, error) {
 	return &opaqueTokenRequest, nil
 }
 
-const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-const (
-	letterIdxBits = 6
-	letterIdxMask = 1<<letterIdxBits - 1
-	letterIdxMax  = 63 / letterIdxBits
-)
-
-func randSecureNumber(bytesLen int) (uint64, error) {
-	bRand := make([]byte, bytesLen)
-	_, err := rand.Read(bRand)
-	if err != nil {
-		log.Printf("Could not read from rand source: %v", err)
-		return 0, err
-	}
-	var randUInt64 uint64
-	errBin := binary.Read(bytes.NewBuffer(bRand), binary.LittleEndian, &randUInt64)
-	if errBin != nil {
-		log.Printf("Could not convert byte-array (length: %d bytes) to uint64: %v", bytesLen, errBin)
-		return 0, errBin
-	}
-	return randUInt64, nil
-}
-
-func randString(n int) (string, error) {
-	b := make([]byte, n)
-	secureNum, err := randSecureNumber(8)
-	if err != nil {
-		return "", err
-	}
-	for i, cache, remain := n-1, secureNum, letterIdxMax; i >= 0; {
-		if remain == 0 {
-			secNum, err := randSecureNumber(8)
-			if err != nil {
-				return "", err
-			}
-			cache, remain = secNum, letterIdxMax
-		}
-		if idx := int(cache & letterIdxMask); idx < len(letters) {
-			b[i] = letters[idx]
-			i--
-		}
-		cache >>= letterIdxBits
-		remain--
-	}
-	return string(b), nil
-}
-
 func (tokenRequest *OpaqueTokenRequest) AccessToken(expSeconds uint64) (*OpaqueToken, error) {
-	at, errAt := randString(36)
+	at, errAt := utils.RandString(36)
 	if errAt != nil {
 		return nil, errAt
 	}
-	rt, errRt := randString(36)
+	rt, errRt := utils.RandString(36)
 	if errRt != nil {
 		return nil, errRt
 	}

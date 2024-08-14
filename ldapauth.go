@@ -18,6 +18,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/gorilla/sessions"
@@ -72,6 +73,7 @@ func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name st
 	}
 
 	gob.Register(oauth2.AuthCode{})
+	gob.Register(oauth2.OpaqueToken{})
 	var buf bytes.Buffer
 
 	return &LdapAuth{
@@ -83,6 +85,12 @@ func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name st
 		gobDecoder: gob.NewDecoder(&buf),
 		gobByteBuf: &buf,
 	}, nil
+}
+
+func (la *LdapAuth) encodeToBytes(obj interface{}) ([]byte, error) {
+	la.gobByteBuf.Reset()
+	err := la.gobEncoder.Encode(obj)
+	return la.gobByteBuf.Bytes(), err
 }
 
 func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -136,6 +144,26 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		log.Printf("AccessToken: %s", string(jsonAT))
+
+		// start a user session
+		// store the AT in the cache until it gets deleted by logout of the user
+		atBytes, atEncErr := la.encodeToBytes(accessToken)
+		if atEncErr != nil {
+			log.Printf("Could not encode access token to bytes: %v", atEncErr)
+			RequireAuth(rw, req, la.config, atEncErr)
+			return
+		}
+		// TODO: check access token is not set yet
+		sessionCacheErr := la.cache.Set(&memcache.Item{
+			Key:        accessToken.AccessToken,
+			Value:      atBytes,
+			Expiration: int32(time.Now().Unix() + int64(accessToken.ExpiresIn)), // int32 unix time lasts until 2038
+		})
+		if sessionCacheErr != nil {
+			log.Printf("Could not store session in cache: %v", sessionCacheErr)
+			RequireAuth(rw, req, la.config, sessionCacheErr)
+			return
+		}
 		ResponseToken(rw, req, la.config, jsonAT)
 		return
 	}
