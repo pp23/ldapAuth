@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/sessions"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
@@ -102,6 +103,38 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var err error
 
+	// #### JWT ####
+	// opaque token sent from client, replace it with a JWT
+	if authValue, ok := req.Header["Authorization"]; ok {
+		if len(strings.Fields(authValue[0])) == 2 && strings.Fields(authValue[0])[0] == "Bearer" {
+			opaqueToken := strings.Fields(authValue[0])[1]
+			// do we have a session with this opaqueToken?
+			item, cacheErr := la.cache.Get(opaqueToken)
+			if cacheErr != nil {
+				log.Printf("JWT: opaqueToken not found in cache: %v", cacheErr)
+				RequireAuth(rw, req, la.config, cacheErr)
+				return
+			}
+			la.gobByteBuf.Reset()
+			_, decByteErr := la.gobByteBuf.Write(item.Value)
+			if decByteErr != nil {
+				log.Printf("JWT: jwt byte value from cache could not be written to decoder buffer: %v", decByteErr)
+				RequireAuth(rw, req, la.config, decByteErr)
+				return
+			}
+			var token jwtv5.Token
+			decErr := la.gobDecoder.Decode(&token)
+			if decErr != nil {
+				log.Printf("JWT: Could not decode jwt byte value from cache: %v", decErr)
+				RequireAuth(rw, req, la.config, decErr)
+				return
+			}
+			req.Header["Authorization"] = []string{"Bearer " + token.Raw}
+			la.next.ServeHTTP(rw, req)
+		}
+	}
+	// ########
+
 	// #### Token ####
 	// opaque token requested?
 	if oauth2.IsOpaqueTokenRequest(req) {
@@ -146,17 +179,32 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		log.Printf("AccessToken: %s", string(jsonAT))
 
 		// start a user session
-		// store the AT in the cache until it gets deleted by logout of the user
-		atBytes, atEncErr := la.encodeToBytes(accessToken)
-		if atEncErr != nil {
-			log.Printf("Could not encode access token to bytes: %v", atEncErr)
-			RequireAuth(rw, req, la.config, atEncErr)
+		// creates a JWT and store it in the cache until it gets deleted by logout of the user or expiration
+		// create JWT
+		type JWTClaims struct {
+			jwtv5.RegisteredClaims
+		}
+		claims := JWTClaims{
+			jwtv5.RegisteredClaims{
+				ExpiresAt: jwtv5.NewNumericDate(time.Now().Add(24 * time.Hour)),
+				IssuedAt:  jwtv5.NewNumericDate(time.Now()),
+				NotBefore: jwtv5.NewNumericDate(time.Now()),
+				Issuer:    "",
+				Subject:   "",
+			},
+		}
+		// TODO: Add user data like its role to the JWT
+		jwt := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
+		ss, jwtErr := jwt.SignedString([]byte("TODO"))
+		if jwtErr != nil {
+			log.Printf("Could not create JWT: %v", jwtErr)
+			RequireAuth(rw, req, la.config, jwtErr)
 			return
 		}
 		// TODO: check access token is not set yet
 		sessionCacheErr := la.cache.Set(&memcache.Item{
 			Key:        accessToken.AccessToken,
-			Value:      atBytes,
+			Value:      []byte(ss),
 			Expiration: int32(time.Now().Unix() + int64(accessToken.ExpiresIn)), // int32 unix time lasts until 2038
 		})
 		if sessionCacheErr != nil {
