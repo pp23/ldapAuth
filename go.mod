@@ -6,6 +6,7 @@ require (
 	github.com/bradfitz/gomemcache v0.0.0-20230905024940-24af94b03874
 	github.com/go-asn1-ber/asn1-ber v1.5.4
 	github.com/go-ldap/ldap/v3 v3.4.4
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/gorilla/sessions v1.2.1
 )
 
