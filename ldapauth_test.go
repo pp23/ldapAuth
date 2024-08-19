@@ -21,6 +21,7 @@ import (
 	"time"
 
 	ber "github.com/go-asn1-ber/asn1-ber"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/pp23/ldapAuth"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 )
@@ -394,7 +395,7 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 	reqRedirect := httptest.NewRequest(
 		"POST",
 		locationURL.String(),
-		strings.NewReader(reqBodyValues.Encode()), // only set because of interface needs it
+		nil,
 	)
 	reqRedirect.PostForm = reqBodyValues // sets the content-type correct
 	b, _ := io.ReadAll(reqRedirect.Body)
@@ -440,6 +441,131 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		t.Errorf("Expected expiration of at least 600s, got %v", resObj["expires_in"].(float64))
 	}
 	// TODO: test whether the token is not a JWT as we expect only an opaque token
+	mockMemcachedServer.Close()
+	mockLdapServer.Close()
+	wg.Wait()
+}
+
+func TestJWTTokenSuccess(t *testing.T) {
+	excpectedRedirectURI := "https://localhost:1234/token"
+	expectedCodeChallenge := "challenge123"
+	expectedState := "123"
+	req := httptest.NewRequest(
+		"POST",
+		"http://localhost/auth?state="+expectedState+"&redirect_uri="+excpectedRedirectURI+"&client_id=abc&response_type=code&code_challenge="+expectedCodeChallenge,
+		nil,
+	)
+	w := httptest.NewRecorder()
+	cfg := ldapIdp.CreateConfig()
+	ctx := context.Background()
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		t.Logf("Next: %v", req.Header)
+		auth, ok := req.Header["Authorization"]
+		if !ok {
+			t.Errorf("Expected \"Authorization\" header, got %v", req.Header)
+		}
+		if len(auth) != 1 {
+			t.Errorf("Expected only 1 \"Authorization\" header, got %d: %v", len(auth), req.Header)
+		}
+		if len(strings.Fields(auth[0])) != 2 {
+			t.Errorf("Expected exactly 2 fields in the authorization value, got %d: %v", len(strings.Fields(auth[0])), auth)
+		}
+		if strings.Fields(auth[0])[0] != "Bearer" {
+			t.Errorf("Expected token type \"Bearer\", got \"%s\"", strings.Fields(auth[0])[0])
+		}
+		jwtString := strings.Fields(auth[0])[1]
+		t.Logf("Got JWT: %s", jwtString)
+		jwtParser := jwtv5.NewParser()
+		jwt, jwtErr := jwtParser.Parse(jwtString, func(token *jwtv5.Token) (interface{}, error) {
+			return []byte("TODO"), nil
+		})
+		if jwtErr != nil {
+			t.Errorf("Could not parse JWT string: %v", jwtErr)
+		}
+		t.Logf("JWT: %v", jwt)
+		rw.WriteHeader(http.StatusOK)
+	})
+	cfg.LogLevel = "DEBUG"
+	cfg.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.URL)
+	mockLdapServer := MockTCPServer{}
+	mockMemcachedServer := MockTCPServer{}
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	// memcachedServer
+	mockMemcache = make(map[string]serverItem)
+	go func() {
+		defer wg.Done()
+		mockMemcachedServer.Run(
+			11211,
+			mockMemCachedMsgHandler,
+			func(err error) { t.Error("Error: ", err) },
+		)
+	}()
+	go func() {
+		defer wg.Done()
+		mockLdapServer.Run(
+			1389,
+			mockBindResponse,
+			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
+		)
+	}()
+	cfg.Port = 1389
+	handler, err := ldapAuth.New(ctx, next, cfg, "ldapAuth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth("user02", "secret")
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	locationURL, err := resp.Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Location-URL: %s", locationURL)
+	authCode := locationURL.Query().Get("code")
+	t.Logf("AuthCode: %s", authCode)
+	locationURL.RawFragment = ""
+	locationURL.RawQuery = "" // no query in token request url, but in the body
+	reqBodyValues := url.Values{}
+	reqBodyValues.Add("grant_type", "authorization_code")
+	reqBodyValues.Add("code", authCode)
+	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
+	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
+	reqRedirect := httptest.NewRequest(
+		"POST",
+		locationURL.String(),
+		nil,
+	)
+	reqRedirect.PostForm = reqBodyValues // sets the content-type correct
+	b, _ := io.ReadAll(reqRedirect.Body)
+	t.Logf("Opaque token request body: %s", string(b))
+	w = httptest.NewRecorder() // new recorder required to prevent checking previous results
+	handler.ServeHTTP(w, reqRedirect)
+	respToken := w.Result()
+	resObj := make(map[string]interface{})
+	body, err := io.ReadAll(respToken.Body)
+	if err != nil {
+		t.Error(err)
+	}
+	errJson := json.Unmarshal(body, &resObj)
+	if errJson != nil {
+		t.Error(errJson)
+	}
+	if at, ok := resObj["access_token"]; ok {
+		getReq := httptest.NewRequest(
+			"GET",
+			"http://localhost/data",
+			nil,
+		)
+		getReq.Header["Authorization"] = []string{"Bearer " + at.(string)}
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, getReq)
+		resp := w.Result()
+		if resp.StatusCode != 200 {
+			t.Errorf("Expected status code 200 from GET request, got %v", resp.Status)
+		}
+	}
 	mockMemcachedServer.Close()
 	mockLdapServer.Close()
 	wg.Wait()

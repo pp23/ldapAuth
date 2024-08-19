@@ -115,22 +115,10 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				RequireAuth(rw, req, la.config, cacheErr)
 				return
 			}
-			la.gobByteBuf.Reset()
-			_, decByteErr := la.gobByteBuf.Write(item.Value)
-			if decByteErr != nil {
-				log.Printf("JWT: jwt byte value from cache could not be written to decoder buffer: %v", decByteErr)
-				RequireAuth(rw, req, la.config, decByteErr)
-				return
-			}
-			var token jwtv5.Token
-			decErr := la.gobDecoder.Decode(&token)
-			if decErr != nil {
-				log.Printf("JWT: Could not decode jwt byte value from cache: %v", decErr)
-				RequireAuth(rw, req, la.config, decErr)
-				return
-			}
-			req.Header["Authorization"] = []string{"Bearer " + token.Raw}
+			// TODO: validate JWT token which were set by us anyway?
+			req.Header["Authorization"] = []string{"Bearer " + string(item.Value)}
 			la.next.ServeHTTP(rw, req)
+			return
 		}
 	}
 	// ########
