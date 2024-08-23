@@ -49,9 +49,20 @@ type LdapAuth struct {
 	gobByteBuf *bytes.Buffer
 }
 
+// Config the plugin configuration.
+type Config struct {
+	Ldap *ldapIdp.Config `json:"ldap" yaml:"ldap"`
+}
+
+func CreateConfig() *Config {
+	return &Config{
+		Ldap: ldapIdp.CreateConfig(),
+	}
+}
+
 // New created a new LdapAuth plugin.
-func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name string) (http.Handler, error) {
-	SetLogger(config.LogLevel)
+func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	SetLogger(config.Ldap.LogLevel)
 
 	LoggerINFO.Printf("Starting %s Middleware...", name)
 
@@ -65,12 +76,12 @@ func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name st
 	if err != nil {
 		return nil, err
 	}
-	store = sessions.NewCookieStore([]byte(config.CacheKey), encKey)
+	store = sessions.NewCookieStore([]byte(config.Ldap.CacheKey), encKey)
 	store.Options = &sessions.Options{
 		HttpOnly: true,
-		MaxAge:   int(config.CacheTimeout),
-		Path:     config.CacheCookiePath,
-		Secure:   config.CacheCookieSecure,
+		MaxAge:   int(config.Ldap.CacheTimeout),
+		Path:     config.Ldap.CacheCookiePath,
+		Secure:   config.Ldap.CacheCookieSecure,
 	}
 
 	gob.Register(oauth2.AuthCode{})
@@ -80,7 +91,7 @@ func New(ctx context.Context, next http.Handler, config *ldapIdp.Config, name st
 	return &LdapAuth{
 		name:       name,
 		next:       next,
-		config:     config,
+		config:     config.Ldap,
 		cache:      memcache.New("127.0.0.1:11211"), // TODO: make it configurable
 		gobEncoder: gob.NewEncoder(&buf),
 		gobDecoder: gob.NewDecoder(&buf),
@@ -515,7 +526,7 @@ func SetLogger(level string) {
 }
 
 // LogConfigParams print confs when logLevel is DEBUG.
-func LogConfigParams(config *ldapIdp.Config) {
+func LogConfigParams(config *Config) {
 	/*
 		Make this to prevent error msg
 		"Error in Go routine: reflect: call of reflect.Value.NumField on ptr Value"
