@@ -23,11 +23,10 @@ import (
 	ber "github.com/go-asn1-ber/asn1-ber"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/pp23/ldapAuth"
-	"github.com/pp23/ldapAuth/internal/ldapIdp"
 )
 
 func TestDemo(t *testing.T) {
-	cfg := ldapIdp.CreateConfig()
+	cfg := ldapAuth.CreateConfig()
 
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
@@ -240,12 +239,12 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 		nil,
 	)
 	w := httptest.NewRecorder()
-	cfg := ldapIdp.CreateConfig()
+	cfg := ldapAuth.CreateConfig()
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
-	cfg.LogLevel = "DEBUG"
-	cfg.URL = "ldap://localhost"
-	t.Log("MockLdapServer URL: " + cfg.URL)
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
 	mockLdapServer := MockTCPServer{}
 	mockMemcachedServer := MockTCPServer{}
 	wg := sync.WaitGroup{}
@@ -270,7 +269,7 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()
-	cfg.Port = 1389
+	cfg.Ldap.Port = 1389
 	handler, err := ldapAuth.New(ctx, next, cfg, "ldapAuth")
 	if err != nil {
 		t.Fatal(err)
@@ -343,12 +342,12 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		nil,
 	)
 	w := httptest.NewRecorder()
-	cfg := ldapIdp.CreateConfig()
+	cfg := ldapAuth.CreateConfig()
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
-	cfg.LogLevel = "DEBUG"
-	cfg.URL = "ldap://localhost"
-	t.Log("MockLdapServer URL: " + cfg.URL)
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
 	mockLdapServer := MockTCPServer{}
 	mockMemcachedServer := MockTCPServer{}
 	wg := sync.WaitGroup{}
@@ -371,7 +370,7 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()
-	cfg.Port = 1389
+	cfg.Ldap.Port = 1389
 	handler, err := ldapAuth.New(ctx, next, cfg, "ldapAuth")
 	if err != nil {
 		t.Fatal(err)
@@ -456,7 +455,7 @@ func TestJWTTokenSuccess(t *testing.T) {
 		nil,
 	)
 	w := httptest.NewRecorder()
-	cfg := ldapIdp.CreateConfig()
+	cfg := ldapAuth.CreateConfig()
 	ctx := context.Background()
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		t.Logf("Next: %v", req.Header)
@@ -485,9 +484,9 @@ func TestJWTTokenSuccess(t *testing.T) {
 		t.Logf("JWT: %v", jwt)
 		rw.WriteHeader(http.StatusOK)
 	})
-	cfg.LogLevel = "DEBUG"
-	cfg.URL = "ldap://localhost"
-	t.Log("MockLdapServer URL: " + cfg.URL)
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
 	mockLdapServer := MockTCPServer{}
 	mockMemcachedServer := MockTCPServer{}
 	wg := sync.WaitGroup{}
@@ -510,7 +509,7 @@ func TestJWTTokenSuccess(t *testing.T) {
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()
-	cfg.Port = 1389
+	cfg.Ldap.Port = 1389
 	handler, err := ldapAuth.New(ctx, next, cfg, "ldapAuth")
 	if err != nil {
 		t.Fatal(err)
