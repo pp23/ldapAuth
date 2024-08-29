@@ -1,3 +1,9 @@
 .idea/
 .DS_Store
 .vscode
+
+# dist artifacts
+out/
+
+# generated api artifacts
+internal/api

@@ -1,0 +1,33 @@
+openapi: 3.0.0
+info:
+  title: archonauth-api
+  version: v0
+  description: >-
+    This API defines endpoints to authenticate users
+    and to get tokens containing authorization information
+paths:
+  /auth:
+    post:
+      security:
+        - BasicAuth: [] # send auth credentials as basic auth
+      description: Authenticate a user
+      responses:
+        "200":
+          description: Success
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+  /token:
+    get:
+      description: Get an access token for an authenticated user
+      responses:
+        "200":
+          description: Success.
+        "401":
+          description: Unauthorized.
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
