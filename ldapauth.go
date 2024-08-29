@@ -344,7 +344,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			Value: la.gobByteBuf.Bytes(),
 		})
 		if errCache != nil {
-			log.Print(errCache)
+			LoggerERROR.Printf("cache: Could not set cache entry: %v", errCache)
 			// TODO: Response error
 		}
 		ResponseAuthCode(rw, req, la.config, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
