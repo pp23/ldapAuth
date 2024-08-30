@@ -20,8 +20,11 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	chi "github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/sessions"
+	"github.com/pp23/ldapAuth/internal/api"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
 )
@@ -39,8 +42,6 @@ var (
 
 // LdapAuth Struct plugin.
 type LdapAuth struct {
-	next       http.Handler
-	name       string
 	config     *ldapIdp.Config
 	cache      *memcache.Client
 	gobEncoder *gob.Encoder
@@ -60,11 +61,8 @@ func CreateConfig() *Config {
 }
 
 // New created a new LdapAuth plugin.
-func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+func New(ctx context.Context, config *Config) (*LdapAuth, error) {
 	SetLogger(config.Ldap.LogLevel)
-
-	LoggerINFO.Printf("Starting %s Middleware...", name)
-
 	LogConfigParams(config)
 
 	// Create new session with CacheKey and CacheTimeout.
@@ -92,8 +90,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("memcache client could not connect to memcache server %s", "127.0.0.1:11211")
 	}
 	return &LdapAuth{
-		name:       name,
-		next:       next,
 		config:     config.Ldap,
 		cache:      mc,
 		gobEncoder: gob.NewEncoder(&buf),
@@ -109,12 +105,6 @@ func (la *LdapAuth) encodeToBytes(obj interface{}) ([]byte, error) {
 }
 
 func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if !la.config.Enabled {
-		LoggerINFO.Printf("%s Disabled! Passing request...", la.name)
-		la.next.ServeHTTP(rw, req)
-		return
-	}
-
 	var err error
 
 	// #### JWT ####
@@ -131,7 +121,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 			// TODO: validate JWT token which were set by us anyway?
 			req.Header["Authorization"] = []string{"Bearer " + string(item.Value)}
-			la.next.ServeHTTP(rw, req)
+			// TODO: Response instead of using next, la.next.ServeHTTP(rw, req)
 			return
 		}
 	}
@@ -437,7 +427,7 @@ func ServeAuthenicated(la *LdapAuth, session *sessions.Session, rw http.Response
 		req.Header.Del("Authorization")
 	}
 
-	la.next.ServeHTTP(rw, req)
+	// TODO: response instead of using next handler, la.next.ServeHTTP(rw, req)
 }
 
 func ResponseError(w http.ResponseWriter, req *http.Request, redirect_uri string, state string, err error, errDescr string) {
@@ -544,5 +534,28 @@ func LogConfigParams(config *Config) {
 	}
 }
 
+type AuthAPI struct {
+	Auth *LdapAuth
+}
+
+func (auth *AuthAPI) PostAuth(w http.ResponseWriter, r *http.Request) {
+}
+
+func (auth *AuthAPI) GetToken(w http.ResponseWriter, r *http.Request) {
+}
+
 func main() {
+	ctx := context.Background()
+	ldapAuth, err := New(ctx, CreateConfig())
+	if err != nil {
+		LoggerERROR.Printf("%v", err)
+		return
+	}
+	authApi := AuthAPI{
+		Auth: ldapAuth,
+	}
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Mount("/", api.HandlerWithOptions(&authApi, api.ChiServerOptions{}))
+	http.ListenAndServe(":3000", r)
 }
