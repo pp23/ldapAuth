@@ -544,18 +544,26 @@ func (auth *AuthAPI) PostAuth(w http.ResponseWriter, r *http.Request) {
 func (auth *AuthAPI) GetToken(w http.ResponseWriter, r *http.Request) {
 }
 
+func NewChiRouter(authApi *AuthAPI) chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Mount("/", api.HandlerWithOptions(authApi, api.ChiServerOptions{}))
+	return r
+}
+
 func main() {
 	ctx := context.Background()
 	ldapAuth, err := New(ctx, CreateConfig())
 	if err != nil {
 		LoggerERROR.Printf("%v", err)
-		return
+		os.Exit(1)
 	}
 	authApi := AuthAPI{
 		Auth: ldapAuth,
 	}
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Mount("/", api.HandlerWithOptions(&authApi, api.ChiServerOptions{}))
-	http.ListenAndServe(":3000", r)
+	errServer := http.ListenAndServe(":3000", NewChiRouter(&authApi))
+	if errServer != nil {
+		LoggerERROR.Printf("%v", err)
+		os.Exit(1)
+	}
 }
