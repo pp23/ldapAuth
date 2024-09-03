@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -104,6 +106,140 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	if len(respBody) != 0 {
 		t.Fatalf("Expected no body, got %s [%v]", string(respBody), len(respBody))
 	}
+	mockMemcachedServer.Close()
+	mockLdapServer.Close()
+	wg.Wait()
+}
+
+// exchange an auth code with an access token
+// as we want to use the phantom token approach, the access token must not include structured data
+// see also https://curity.io/resources/learn/phantom-token-pattern/
+func TestOpaqueTokenResponseSuccess(t *testing.T) {
+	ctx := context.Background()
+	cfg := CreateConfig()
+	// next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	ldapAuth, err := New(ctx, cfg)
+	if err != nil {
+		LoggerERROR.Printf("%v", err)
+		os.Exit(1)
+	}
+	authApi := AuthAPI{
+		Auth: ldapAuth,
+	}
+	handler := NewChiRouter(&authApi)
+
+	expectedHeaders := map[string]string{
+		"Content-Type": "application/json;charset=UTF-8",
+		// authorization server MUST include the HTTP "Cache-Control"
+		// response header field [RFC2616] with a value of "no-store" in any
+		// response containing tokens, credentials, or other sensitive
+		// information
+		"Cache-Control": "no-store",
+		// as well as the "Pragma" response header field [RFC2616]
+		// with a value of "no-cache"
+		"Pragma": "no-cache",
+	}
+	excpectedRedirectURI := "https://localhost:1234/token"
+	expectedCodeChallenge := "challenge123"
+	expectedState := "123"
+	req := httptest.NewRequest(
+		"POST",
+		"http://localhost/auth?state="+expectedState+"&redirect_uri="+excpectedRedirectURI+"&client_id=abc&response_type=code&code_challenge="+expectedCodeChallenge,
+		nil,
+	)
+	w := httptest.NewRecorder()
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
+	mockLdapServer := test.MockTCPServer{}
+	mockMemcachedServer := test.MockTCPServer{}
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	// memcachedServer
+	go func() {
+		defer wg.Done()
+		mockMemcachedServer.Run(
+			11211,
+			mockMemcache.MockMemCachedMsgHandler,
+			func(err error) { t.Error("Error: ", err) },
+		)
+	}()
+	go func() {
+		defer wg.Done()
+		mockLdapServer.Run(
+			1389,
+			test.MockBindResponse,
+			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
+		)
+	}()
+	cfg.Ldap.Port = 1389
+	req.SetBasicAuth("user02", "secret")
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	locationURL, err := resp.Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authCode := locationURL.Query().Get("code")
+	t.Logf("AuthCode: %s", authCode)
+	locationURL.RawFragment = ""
+	locationURL.RawQuery = "" // no query in token request url, but in the body
+	reqBodyValues := url.Values{}
+	reqBodyValues.Add("grant_type", "authorization_code")
+	reqBodyValues.Add("code", authCode)
+	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
+	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
+	reqRedirect := httptest.NewRequest(
+		"GET", // TODO: POST? What does the RFC tell here?
+		locationURL.String(),
+		nil,
+	)
+	reqRedirect.PostForm = reqBodyValues // sets the content-type correct
+	b, _ := io.ReadAll(reqRedirect.Body)
+	t.Logf("Opaque token request body: %s", string(b))
+	w = httptest.NewRecorder() // new recorder required to prevent checking previous results
+	handler.ServeHTTP(w, reqRedirect)
+	respToken := w.Result()
+	if respToken.Status != "200 OK" {
+		t.Fatalf("Expected token response status \"200 OK\", got \"%s\"", respToken.Status)
+	}
+	for expectedHeaderKey, expectedHeaderValue := range expectedHeaders {
+		if headerValue, ok := respToken.Header[expectedHeaderKey]; !ok {
+			t.Fatalf("%s header not found in token response", expectedHeaderKey)
+		} else {
+			if headerValue[0] != expectedHeaderValue {
+				t.Fatalf("Expected value \"%s\" for header \"%s\", got \"%s\"", expectedHeaderValue, expectedHeaderKey, headerValue[0])
+			}
+		}
+	}
+	resObj := make(map[string]interface{})
+	body, err := io.ReadAll(respToken.Body)
+	if err != nil {
+		t.Error(err)
+	}
+	errJson := json.Unmarshal(body, &resObj)
+	if errJson != nil {
+		t.Error(errJson)
+	}
+	t.Log(resObj)
+	for _, k := range []string{"access_token", "token_type", "expires_in", "refresh_token", "scope"} {
+		if _, ok := resObj[k]; !ok {
+			t.Errorf("Missing key in response access token json object: %s, got response %v", k, resObj)
+		}
+	}
+	// check for not long enough access tokens, UUIDs have 32 characters + 4 dashes
+	if len(resObj["access_token"].(string)) < 36 {
+		t.Errorf("Access token should have sufficient lenght of at least an UUID. Expected 36 characters, got %v (%s)", len(resObj["access_token"].(string)), resObj["access_token"].(string))
+	}
+	if resObj["token_type"].(string) != "bearer" {
+		t.Errorf("Expected token_type bearer, got %s", resObj["token_type"].(string))
+	}
+	if resObj["expires_in"].(float64) < 600 {
+		t.Errorf("Expected expiration of at least 600s, got %v", resObj["expires_in"].(float64))
+	}
+	// TODO: test whether the token is not a JWT as we expect only an opaque token
 	mockMemcachedServer.Close()
 	mockLdapServer.Close()
 	wg.Wait()

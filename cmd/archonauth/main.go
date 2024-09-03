@@ -647,7 +647,88 @@ func (auth *AuthAPI) PostAuth(rw http.ResponseWriter, req *http.Request) {
 	// ##############
 }
 
-func (auth *AuthAPI) GetToken(w http.ResponseWriter, r *http.Request) {
+func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
+	// #### Token ####
+	// opaque token requested?
+	if oauth2.IsOpaqueTokenRequest(req) {
+		opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
+		if err != nil {
+			log.Printf("opaque token error: %v", err)
+			RequireAuth(rw, req, auth.Auth.config, err)
+			return
+		}
+		var authCodeRequest oauth2.AuthCode
+		auth.Auth.gobByteBuf.Reset()
+		item, cacheErr := auth.Auth.cache.Get("code" + opaqueTokenRequest.Code)
+		if cacheErr != nil {
+			log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
+			RequireAuth(rw, req, auth.Auth.config, cacheErr)
+			return
+		}
+		_, bufErr := auth.Auth.gobByteBuf.Write(item.Value)
+		if bufErr != nil {
+			log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
+			RequireAuth(rw, req, auth.Auth.config, bufErr)
+			return
+		}
+		gobErr := auth.Auth.gobDecoder.Decode(&authCodeRequest)
+		if gobErr != nil {
+			log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
+			RequireAuth(rw, req, auth.Auth.config, gobErr)
+			return
+		}
+		accessToken, err := opaqueTokenRequest.AccessToken(600)
+		if err != nil {
+			log.Printf("opaque token error: %v", err)
+			RequireAuth(rw, req, auth.Auth.config, err)
+			return
+		}
+		jsonAT, errJson := accessToken.Json()
+		if errJson != nil {
+			log.Printf("Could not get JSON of AccessToken: %v", errJson)
+			RequireAuth(rw, req, auth.Auth.config, errJson)
+			return
+		}
+		log.Printf("AccessToken: %s", string(jsonAT))
+
+		// start a user session
+		// creates a JWT and store it in the cache until it gets deleted by logout of the user or expiration
+		// create JWT
+		type JWTClaims struct {
+			jwtv5.RegisteredClaims
+		}
+		claims := JWTClaims{
+			jwtv5.RegisteredClaims{
+				ExpiresAt: jwtv5.NewNumericDate(time.Now().Add(24 * time.Hour)),
+				IssuedAt:  jwtv5.NewNumericDate(time.Now()),
+				NotBefore: jwtv5.NewNumericDate(time.Now()),
+				Issuer:    "",
+				Subject:   "",
+			},
+		}
+		// TODO: Add user data like its role to the JWT
+		jwt := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
+		ss, jwtErr := jwt.SignedString([]byte("TODO"))
+		if jwtErr != nil {
+			log.Printf("Could not create JWT: %v", jwtErr)
+			RequireAuth(rw, req, auth.Auth.config, jwtErr)
+			return
+		}
+		// TODO: check access token is not set yet
+		sessionCacheErr := auth.Auth.cache.Set(&memcache.Item{
+			Key:        accessToken.AccessToken,
+			Value:      []byte(ss),
+			Expiration: int32(time.Now().Unix() + int64(accessToken.ExpiresIn)), // int32 unix time lasts until 2038
+		})
+		if sessionCacheErr != nil {
+			log.Printf("Could not store session in cache: %v", sessionCacheErr)
+			RequireAuth(rw, req, auth.Auth.config, sessionCacheErr)
+			return
+		}
+		ResponseToken(rw, req, auth.Auth.config, jsonAT)
+		return
+	}
+	// ##############
 }
 
 func NewChiRouter(authApi *AuthAPI) chi.Router {
