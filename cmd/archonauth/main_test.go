@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"sync"
 	"testing"
+
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/pp23/ldapAuth/cmd/archonauth/test"
 )
@@ -240,6 +243,126 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		t.Errorf("Expected expiration of at least 600s, got %v", resObj["expires_in"].(float64))
 	}
 	// TODO: test whether the token is not a JWT as we expect only an opaque token
+	mockMemcachedServer.Close()
+	mockLdapServer.Close()
+	wg.Wait()
+}
+
+func TestJWTTokenSuccess(t *testing.T) {
+	ctx := context.Background()
+	cfg := CreateConfig()
+	// next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	ldapAuth, err := New(ctx, cfg)
+	if err != nil {
+		LoggerERROR.Printf("%v", err)
+		os.Exit(1)
+	}
+	authApi := AuthAPI{
+		Auth: ldapAuth,
+	}
+	handler := NewChiRouter(&authApi)
+
+	excpectedRedirectURI := "https://localhost:1234/token"
+	expectedCodeChallenge := "challenge123"
+	expectedState := "123"
+	req := httptest.NewRequest(
+		"POST",
+		"http://localhost/auth?state="+expectedState+"&redirect_uri="+excpectedRedirectURI+"&client_id=abc&response_type=code&code_challenge="+expectedCodeChallenge,
+		nil,
+	)
+	w := httptest.NewRecorder()
+	cfg.Ldap.LogLevel = "DEBUG"
+	cfg.Ldap.URL = "ldap://localhost"
+	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
+	mockLdapServer := test.MockTCPServer{}
+	mockMemcachedServer := test.MockTCPServer{}
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	// memcachedServer
+	go func() {
+		defer wg.Done()
+		mockMemcachedServer.Run(
+			11211,
+			mockMemcache.MockMemCachedMsgHandler,
+			func(err error) { t.Error("Error: ", err) },
+		)
+	}()
+	go func() {
+		defer wg.Done()
+		mockLdapServer.Run(
+			1389,
+			test.MockBindResponse,
+			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
+		)
+	}()
+	cfg.Ldap.Port = 1389
+	req.SetBasicAuth("user02", "secret")
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	locationURL, err := resp.Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Location-URL: %s", locationURL)
+	authCode := locationURL.Query().Get("code")
+	t.Logf("AuthCode: %s", authCode)
+	locationURL.RawFragment = ""
+	locationURL.RawQuery = "" // no query in token request url, but in the body
+	reqBodyValues := url.Values{}
+	reqBodyValues.Add("grant_type", "authorization_code")
+	reqBodyValues.Add("code", authCode)
+	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
+	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
+	reqRedirect := httptest.NewRequest(
+		"GET",
+		locationURL.String(),
+		nil,
+	)
+	reqRedirect.PostForm = reqBodyValues // sets the content-type correct
+	b, _ := io.ReadAll(reqRedirect.Body)
+	t.Logf("Opaque token request body: %s", string(b))
+	w = httptest.NewRecorder() // new recorder required to prevent checking previous results
+	handler.ServeHTTP(w, reqRedirect)
+	respToken := w.Result()
+	resObj := make(map[string]interface{})
+	body, err := io.ReadAll(respToken.Body)
+	if err != nil {
+		t.Error(err)
+	}
+	errJson := json.Unmarshal(body, &resObj)
+	if errJson != nil {
+		t.Error(errJson)
+	}
+	if at, ok := resObj["access_token"]; ok {
+		getReq := httptest.NewRequest(
+			"GET",
+			"http://localhost/jwt",
+			nil,
+		)
+		getReq.Header["Authorization"] = []string{"Bearer " + at.(string)}
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, getReq)
+		resp := w.Result()
+		if resp.StatusCode != 200 {
+			t.Errorf("Expected status code 200 from GET request, got %v", resp.Status)
+		}
+		jwtBytes, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			t.Errorf("Could not read JWT response body: %v", err)
+		}
+		jwtString := string(jwtBytes)
+		t.Logf("Got JWT: %s", jwtString)
+		jwtParser := jwtv5.NewParser()
+		jwt, jwtErr := jwtParser.Parse(jwtString, func(token *jwtv5.Token) (interface{}, error) {
+			return []byte("TODO"), nil
+		})
+		if jwtErr != nil {
+			t.Errorf("Could not parse JWT string: %v", jwtErr)
+		}
+		t.Logf("JWT: %v", jwt)
+	}
 	mockMemcachedServer.Close()
 	mockLdapServer.Close()
 	wg.Wait()

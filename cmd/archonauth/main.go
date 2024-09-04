@@ -731,6 +731,27 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 	// ##############
 }
 
+func (auth *AuthAPI) GetJwt(rw http.ResponseWriter, req *http.Request) {
+	// #### JWT ####
+	// opaque token sent from client, replace it with a JWT
+	if authValue, ok := req.Header["Authorization"]; ok {
+		if len(strings.Fields(authValue[0])) == 2 && strings.Fields(authValue[0])[0] == "Bearer" {
+			opaqueToken := strings.Fields(authValue[0])[1]
+			// do we have a session with this opaqueToken?
+			item, cacheErr := auth.Auth.cache.Get(opaqueToken)
+			if cacheErr != nil {
+				log.Printf("JWT: opaqueToken not found in cache: %v", cacheErr)
+				RequireAuth(rw, req, auth.Auth.config, cacheErr)
+				return
+			}
+			// TODO: validate JWT token which were set by us anyway?
+			rw.Write(item.Value)
+			rw.WriteHeader(http.StatusOK)
+		}
+	}
+	// ########
+}
+
 func NewChiRouter(authApi *AuthAPI) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
