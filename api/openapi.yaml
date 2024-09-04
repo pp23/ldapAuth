@@ -26,8 +26,24 @@ paths:
           description: Success.
         "401":
           description: Unauthorized.
+  /jwt:
+    get:
+      security:
+        - AccessTokenAuth: []
+      description: >-
+        Get an JWT in exchange for an access token.
+        The JWT contains structured data about the
+        authenticated user.
+      responses:
+        "200":
+          description: Success.
+        "401":
+          description: Unauthorized.
 components:
   securitySchemes:
     BasicAuth:
       type: http
       scheme: basic
+    AccessTokenAuth:
+      type: http
+      scheme: bearer
