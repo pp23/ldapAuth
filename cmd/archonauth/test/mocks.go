@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	ber "github.com/go-asn1-ber/asn1-ber"
@@ -111,6 +112,7 @@ type MockTCPServer struct {
 	l        net.Listener
 	conns    []net.Conn
 	stop     bool
+	wg       sync.WaitGroup
 }
 
 type TesTCPPServer interface {
@@ -141,6 +143,7 @@ func (mockTcpServer *MockTCPServer) Run(
 			// check if server was stopped anyway (the error resulted likely from a use of closed network connection)
 			if mockTcpServer.stop {
 				// errHandler(err) // usually not an error
+				mockTcpServer.Close()
 				break
 			}
 			errHandler(err)
@@ -148,19 +151,22 @@ func (mockTcpServer *MockTCPServer) Run(
 		}
 		fmt.Printf("New connection: %s", conn.RemoteAddr())
 		mockTcpServer.conns = append(mockTcpServer.conns, conn)
-		defer conn.Close()
-		br := bufio.NewReader(conn)
-		bw := bufio.NewWriter(conn)
-		msgErr := msgHandler(br, bw)
-		if msgErr != nil {
-			if !errors.Is(msgErr, io.EOF) {
-				fmt.Printf("msgHandler error %v", msgErr)
-				errHandler(msgErr)
-			} else {
-				fmt.Printf("Ignoring error %v", msgErr)
+		mockTcpServer.wg.Add(1)
+		go func() {
+			defer conn.Close()
+			defer mockTcpServer.wg.Done()
+			br := bufio.NewReader(conn)
+			bw := bufio.NewWriter(conn)
+			msgErr := msgHandler(br, bw)
+			if msgErr != nil {
+				if !errors.Is(msgErr, io.EOF) {
+					fmt.Printf("msgHandler error %v", msgErr)
+					errHandler(msgErr)
+				} else {
+					fmt.Printf("Ignoring error %v", msgErr)
+				}
 			}
-		}
-		conn.Close()
+		}()
 	}
 	return nil
 }
@@ -175,6 +181,7 @@ func (mockTcpServer *MockTCPServer) Close() {
 	for _, c := range mockTcpServer.conns {
 		c.Close()
 	}
+	mockTcpServer.wg.Wait()
 }
 
 func MockBindResponse(br *bufio.Reader, bw *bufio.Writer) error {

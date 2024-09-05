@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"sync"
 	"testing"
 
@@ -21,20 +19,9 @@ import (
 var mockMemcache test.MockMemCache = test.NewMockMemCache()
 
 func TestAuthCodeResponseSuccess(t *testing.T) {
-	ctx := context.Background()
-	cfg := CreateConfig()
-	// next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
-	cfg.Ldap.LogLevel = "DEBUG"
-	cfg.Ldap.URL = "ldap://localhost"
-	ldapAuth, err := New(ctx, cfg)
-	if err != nil {
-		LoggerERROR.Printf("%v", err)
-		os.Exit(1)
-	}
-	authApi := AuthAPI{
-		Auth: ldapAuth,
-	}
-	handler := NewChiRouter(&authApi)
+	cfg := test.CreateConfig()
+	authApi := test.NewAuthApi(cfg, t)
+	handler := NewChiRouter(authApi)
 
 	excpectedRedirectURI := "https://localhost:1234/token"
 	expectedCodeChallenge := "challenge123"
@@ -118,20 +105,9 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 // as we want to use the phantom token approach, the access token must not include structured data
 // see also https://curity.io/resources/learn/phantom-token-pattern/
 func TestOpaqueTokenResponseSuccess(t *testing.T) {
-	ctx := context.Background()
-	cfg := CreateConfig()
-	// next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
-	cfg.Ldap.LogLevel = "DEBUG"
-	cfg.Ldap.URL = "ldap://localhost"
-	ldapAuth, err := New(ctx, cfg)
-	if err != nil {
-		LoggerERROR.Printf("%v", err)
-		os.Exit(1)
-	}
-	authApi := AuthAPI{
-		Auth: ldapAuth,
-	}
-	handler := NewChiRouter(&authApi)
+	cfg := test.CreateConfig()
+	authApi := test.NewAuthApi(cfg, t)
+	handler := NewChiRouter(authApi)
 
 	expectedHeaders := map[string]string{
 		"Content-Type": "application/json;charset=UTF-8",
@@ -249,20 +225,9 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 }
 
 func TestJWTTokenSuccess(t *testing.T) {
-	ctx := context.Background()
-	cfg := CreateConfig()
-	// next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
-	cfg.Ldap.LogLevel = "DEBUG"
-	cfg.Ldap.URL = "ldap://localhost"
-	ldapAuth, err := New(ctx, cfg)
-	if err != nil {
-		LoggerERROR.Printf("%v", err)
-		os.Exit(1)
-	}
-	authApi := AuthAPI{
-		Auth: ldapAuth,
-	}
-	handler := NewChiRouter(&authApi)
+	cfg := test.CreateConfig()
+	authApi := test.NewAuthApi(cfg, t)
+	handler := NewChiRouter(authApi)
 
 	excpectedRedirectURI := "https://localhost:1234/token"
 	expectedCodeChallenge := "challenge123"
