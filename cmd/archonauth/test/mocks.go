@@ -185,7 +185,7 @@ func (mockTcpServer *MockTCPServer) Close() {
 }
 
 func MockBindResponse(br *bufio.Reader, bw *bufio.Writer) error {
-	// build the LDAP Bind Response packet
+	// build the LDAP Bind Response packet, see https://ldap.com/ldapv3-wire-protocol-reference-bind/
 	pkt := ber.Encode(ber.ClassApplication, ber.TypeConstructed, 1, nil, "Bind Response")
 	pkt.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 0, "resultCode"))
 	pkt.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagUTF8String, "cn=user02", "matchedDN"))

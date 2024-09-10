@@ -48,18 +48,22 @@ func getAuthApiHandler(cfg *archonauth.Config, t *testing.T) http.Handler {
 	return test.NewAuthApiHandler(api)
 }
 
-func getAccessToken(cfg *archonauth.Config, handler http.Handler, t *testing.T) string {
-	return test.GetOpaqueToken(handler, cfg, t)
+func getAccessToken(cfg *archonauth.Config, handler http.Handler, testConfig test.TestConfig, t *testing.T) string {
+	return test.GetOpaqueToken(handler, cfg, testConfig, t)
 }
 
 func TestJWTTokenSuccess(t *testing.T) {
+	testCfg, testCfgErr := test.TestConfigFromEnv()
+	if testCfgErr != nil {
+		t.Fatal(testCfgErr)
+	}
 	wg := sync.WaitGroup{}
 	mockMemcache := test.NewMockMemCache()
 	mockMemcachedServer := test.RunMockMemCacheServer(&wg, &mockMemcache, t)
 	mockLdapServer := test.RunMockLdapServer(&wg, t)
 	cfg := test.CreateConfig()
 	handler := getAuthApiHandler(cfg, t)
-	at := getAccessToken(cfg, handler, t)
+	at := getAccessToken(cfg, handler, testCfg, t)
 	getReq := httptest.NewRequest(
 		"GET",
 		"http://localhost/jwt",
