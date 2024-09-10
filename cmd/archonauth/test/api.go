@@ -69,7 +69,7 @@ func RunMockLdapServer(wg *sync.WaitGroup, t *testing.T) *MockTCPServer {
 	return &mockLdapServer
 }
 
-func GetOpaqueToken(handler http.Handler, cfg *archonauth.Config, t *testing.T) string {
+func GetOpaqueToken(handler http.Handler, cfg *archonauth.Config, testCfg TestConfig, t *testing.T) string {
 	expectedHeaders := map[string]string{
 		"Content-Type": "application/json;charset=UTF-8",
 		// authorization server MUST include the HTTP "Cache-Control"
@@ -94,7 +94,7 @@ func GetOpaqueToken(handler http.Handler, cfg *archonauth.Config, t *testing.T) 
 	cfg.Ldap.URL = "ldap://localhost"
 	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
 	cfg.Ldap.Port = 1389
-	req.SetBasicAuth("user02", "secret")
+	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword)
 	handler.ServeHTTP(w, req)
 	resp := w.Result()
 	locationURL, err := resp.Location()

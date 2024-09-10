@@ -19,6 +19,10 @@ import (
 var mockMemcache test.MockMemCache = test.NewMockMemCache()
 
 func TestAuthCodeResponseSuccess(t *testing.T) {
+	testCfg, testCfgErr := test.TestConfigFromEnv()
+	if testCfgErr != nil {
+		t.Fatal(testCfgErr)
+	}
 	cfg := test.CreateConfig()
 	authApi := test.NewAuthApi(cfg, t)
 	handler := NewChiRouter(authApi)
@@ -57,8 +61,8 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 		)
 	}()
 	cfg.Ldap.Port = 1389
-	req.SetBasicAuth("user02", "secret") // password gets not checked as we mock the ldap server which accepts every user
-	handler.ServeHTTP(w, req)            // request an auth code. The user auth is done against the mocked ldap server
+	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword) // password gets not checked as we mock the ldap server which accepts every user
+	handler.ServeHTTP(w, req)                                    // request an auth code. The user auth is done against the mocked ldap server
 	resp := w.Result()
 	t.Log(resp.StatusCode)
 	// auth code reponse should redirect to provided redirect_uri
@@ -105,6 +109,10 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 // as we want to use the phantom token approach, the access token must not include structured data
 // see also https://curity.io/resources/learn/phantom-token-pattern/
 func TestOpaqueTokenResponseSuccess(t *testing.T) {
+	testCfg, testCfgErr := test.TestConfigFromEnv()
+	if testCfgErr != nil {
+		t.Fatal(testCfgErr)
+	}
 	cfg := test.CreateConfig()
 	authApi := test.NewAuthApi(cfg, t)
 	handler := NewChiRouter(authApi)
@@ -154,7 +162,7 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		)
 	}()
 	cfg.Ldap.Port = 1389
-	req.SetBasicAuth("user02", "secret")
+	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword)
 	handler.ServeHTTP(w, req)
 	resp := w.Result()
 	locationURL, err := resp.Location()
@@ -225,6 +233,10 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 }
 
 func TestJWTTokenSuccess(t *testing.T) {
+	testCfg, testCfgErr := test.TestConfigFromEnv()
+	if testCfgErr != nil {
+		t.Fatal(testCfgErr)
+	}
 	cfg := test.CreateConfig()
 	authApi := test.NewAuthApi(cfg, t)
 	handler := NewChiRouter(authApi)
@@ -263,7 +275,7 @@ func TestJWTTokenSuccess(t *testing.T) {
 		)
 	}()
 	cfg.Ldap.Port = 1389
-	req.SetBasicAuth("user02", "secret")
+	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword)
 	handler.ServeHTTP(w, req)
 	resp := w.Result()
 	locationURL, err := resp.Location()
