@@ -738,7 +738,13 @@ func (auth *AuthAPI) GetJwt(rw http.ResponseWriter, req *http.Request) {
 			// TODO: validate JWT token which were set by us anyway?
 			rw.Write(item.Value)
 			rw.WriteHeader(http.StatusOK)
+		} else {
+			LoggerERROR.Printf("Bad Request. Authorization header malformed: %v", authValue)
+			RequireAuth(rw, req, auth.Auth.config, fmt.Errorf("Bad Request"))
 		}
+	} else {
+		LoggerERROR.Printf("Bad Request. No Authorization header: %v", req.Header)
+		RequireAuth(rw, req, auth.Auth.config, fmt.Errorf("Bad Request"))
 	}
 	// ########
 }

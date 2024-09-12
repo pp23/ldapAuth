@@ -58,10 +58,13 @@ func CreateConfig() *Config {
 // New created a new LdapAuth plugin.
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
 	SetLogger(config.LogLevel)
+	LogConfigParams(config)
+
+	if config.JwtTokenUri == "" {
+		log.Fatalf("No JwtTokenUri set in config. Expected URI to internal JWT archonauth-api endpoint.")
+	}
 
 	LoggerINFO.Printf("Starting %s Middleware...", name)
-
-	LogConfigParams(config)
 
 	// Create new session with CacheKey and CacheTimeout.
 	// TODO: dynamically generated rand number could cause decryption errors
@@ -135,7 +138,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	jwtReq.Header["Authorization"] = []string{
-		"bearer " + opaqueToken,
+		"Bearer " + opaqueToken,
 	}
 	resp, respErr := la.client.Do(jwtReq)
 	if respErr != nil {
@@ -143,6 +146,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		RequireAuth(rw, req, la.config, fmt.Errorf("Bad Request"))
 		return
 	}
+	LoggerINFO.Printf("JWT-Response: %v", resp)
 	jwtBytes, jwtErr := ioutil.ReadAll(resp.Body)
 	if jwtErr != nil {
 		LoggerERROR.Printf("Could not read JWT from response body: %v", respErr)
@@ -151,7 +155,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	// replace Authorization header in the original request with the JWT
 	req.Header["Authorization"] = []string{
-		"bearer " + string(jwtBytes),
+		"Bearer " + string(jwtBytes),
 	}
 	// ########
 
