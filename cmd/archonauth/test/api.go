@@ -85,7 +85,7 @@ func GetOpaqueToken(handler http.Handler, cfg *archonauth.Config, testCfg TestCo
 	expectedCodeChallenge := "challenge123"
 	expectedState := "123"
 	req := httptest.NewRequest(
-		"POST",
+		"GET",
 		"http://localhost/auth?state="+expectedState+"&redirect_uri="+excpectedRedirectURI+"&client_id=abc&response_type=code&code_challenge="+expectedCodeChallenge,
 		nil,
 	)
