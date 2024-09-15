@@ -40,10 +40,10 @@ type LdapAuth struct {
 // Config the plugin configuration.
 type Config struct {
 	Enabled           bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	AuthUri           string `json:"auth_uri" yaml:"auth_uri"`
-	OpaqueTokenUri    string `json:"opaque_token_uri" yaml:"opaque_token_uri"`
-	JwtTokenUri       string `json:"jwt_token_uri" yaml:"jwt_token_uri"`
-	LogLevel          string `json:"log_level,omitempty" yaml:"log_level,omitempty"`
+	AuthUri           string `json:"authUri" yaml:"authUri"`
+	OpaqueTokenUri    string `json:"opaqueTokenUri" yaml:"opaqueTokenUri"`
+	JwtTokenUri       string `json:"jwtTokenUri" yaml:"jwtTokenUri"`
+	LogLevel          string `json:"logLevel,omitempty" yaml:"logLevel,omitempty"`
 	CacheTimeout      uint32 `json:"cacheTimeout,omitempty" yaml:"cacheTimeout,omitempty"`
 	CacheCookieName   string `json:"cacheCookieName,omitempty" yaml:"cacheCookieName,omitempty"`
 	CacheCookiePath   string `json:"cacheCookiePath,omitempty" yaml:"cacheCookiePath,omitempty"`

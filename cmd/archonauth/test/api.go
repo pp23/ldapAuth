@@ -13,14 +13,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	archonauth "github.com/pp23/ldapAuth/cmd/archonauth/archoauth_api"
+	"github.com/pp23/ldapAuth/cmd/archonauth/config"
 	"github.com/pp23/ldapAuth/internal/api"
 )
 
-func CreateConfig() *archonauth.Config {
-	return archonauth.CreateConfig()
+func CreateConfig() *config.Config {
+	return config.CreateConfig()
 }
 
-func NewAuthApi(cfg *archonauth.Config, t *testing.T) *archonauth.AuthAPI {
+func NewAuthApi(cfg *config.Config, t *testing.T) *archonauth.AuthAPI {
 	ctx := context.Background()
 	// next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
 	cfg.Ldap.LogLevel = "DEBUG"
@@ -69,7 +70,7 @@ func RunMockLdapServer(wg *sync.WaitGroup, t *testing.T) *MockTCPServer {
 	return &mockLdapServer
 }
 
-func GetOpaqueToken(handler http.Handler, cfg *archonauth.Config, testCfg TestConfig, t *testing.T) string {
+func GetOpaqueToken(handler http.Handler, cfg *config.Config, testCfg TestConfig, t *testing.T) string {
 	expectedHeaders := map[string]string{
 		"Content-Type": "application/json;charset=UTF-8",
 		// authorization server MUST include the HTTP "Cache-Control"
