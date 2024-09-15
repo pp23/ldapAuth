@@ -7,7 +7,7 @@ info:
     and to get tokens containing authorization information
 paths:
   /auth:
-    post:
+    get:
       security:
         - BasicAuth: [] # send auth credentials as basic auth
       description: Authenticate a user

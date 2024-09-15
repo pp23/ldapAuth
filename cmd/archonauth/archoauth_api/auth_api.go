@@ -529,7 +529,7 @@ type AuthAPI struct {
 	Auth *LdapAuth
 }
 
-func (auth *AuthAPI) PostAuth(rw http.ResponseWriter, req *http.Request) {
+func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 	// #### Auth ####
 
 	// auth code requested?
