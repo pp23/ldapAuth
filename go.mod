@@ -9,6 +9,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/gorilla/sessions v1.2.1
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (

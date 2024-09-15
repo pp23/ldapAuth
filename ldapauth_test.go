@@ -13,7 +13,7 @@ import (
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/pp23/ldapAuth"
-	archonauth "github.com/pp23/ldapAuth/cmd/archonauth/archoauth_api"
+	config "github.com/pp23/ldapAuth/cmd/archonauth/config"
 	"github.com/pp23/ldapAuth/cmd/archonauth/test"
 )
 
@@ -47,12 +47,12 @@ func assertHeader(t *testing.T, req *http.Request, key, expected string) {
 	}
 }
 
-func getAuthApiHandler(cfg *archonauth.Config, t *testing.T) http.Handler {
+func getAuthApiHandler(cfg *config.Config, t *testing.T) http.Handler {
 	api := test.NewAuthApi(cfg, t)
 	return test.NewAuthApiHandler(api)
 }
 
-func getAccessToken(cfg *archonauth.Config, handler http.Handler, testConfig test.TestConfig, t *testing.T) string {
+func getAccessToken(cfg *config.Config, handler http.Handler, testConfig test.TestConfig, t *testing.T) string {
 	return test.GetOpaqueToken(handler, cfg, testConfig, t)
 }
 

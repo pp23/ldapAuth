@@ -21,6 +21,8 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/sessions"
+
+	"github.com/pp23/ldapAuth/cmd/archonauth/config"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
 )
@@ -45,19 +47,8 @@ type LdapAuth struct {
 	gobByteBuf *bytes.Buffer
 }
 
-// Config the plugin configuration.
-type Config struct {
-	Ldap *ldapIdp.Config `json:"ldap" yaml:"ldap"`
-}
-
-func CreateConfig() *Config {
-	return &Config{
-		Ldap: ldapIdp.CreateConfig(),
-	}
-}
-
 // New created a new LdapAuth plugin.
-func New(ctx context.Context, config *Config) (*LdapAuth, error) {
+func New(ctx context.Context, config *config.Config) (*LdapAuth, error) {
 	SetLogger(config.Ldap.LogLevel)
 	LogConfigParams(config)
 
@@ -510,7 +501,7 @@ func SetLogger(level string) {
 }
 
 // LogConfigParams print confs when logLevel is DEBUG.
-func LogConfigParams(config *Config) {
+func LogConfigParams(config *config.Config) {
 	/*
 		Make this to prevent error msg
 		"Error in Go routine: reflect: call of reflect.Value.NumField on ptr Value"
