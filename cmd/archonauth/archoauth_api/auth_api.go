@@ -3,11 +3,8 @@ package archonauth
 import (
 	"bytes"
 	"context"
-	"crypto"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -15,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,7 +38,7 @@ var (
 
 // LdapAuth Struct plugin.
 type LdapAuth struct {
-	config     *ldapIdp.Config
+	config     *config.Config
 	cache      *memcache.Client
 	gobEncoder *gob.Encoder
 	gobDecoder *gob.Decoder
@@ -72,7 +70,7 @@ func New(ctx context.Context, config *config.Config) (*LdapAuth, error) {
 	gob.Register(oauth2.OpaqueToken{})
 	var buf bytes.Buffer
 	return &LdapAuth{
-		config:     config.Ldap,
+		config:     config,
 		cache:      memcache.New("127.0.0.1:11211"), // TODO: make it configurable
 		gobEncoder: gob.NewEncoder(&buf),
 		gobDecoder: gob.NewDecoder(&buf),
@@ -86,314 +84,321 @@ func (la *LdapAuth) encodeToBytes(obj interface{}) ([]byte, error) {
 	return la.gobByteBuf.Bytes(), err
 }
 
-func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	var err error
-
-	// #### JWT ####
-	// opaque token sent from client, replace it with a JWT
-	if authValue, ok := req.Header["Authorization"]; ok {
-		if len(strings.Fields(authValue[0])) == 2 && strings.Fields(authValue[0])[0] == "Bearer" {
-			opaqueToken := strings.Fields(authValue[0])[1]
-			// do we have a session with this opaqueToken?
-			item, cacheErr := la.cache.Get(opaqueToken)
-			if cacheErr != nil {
-				log.Printf("JWT: opaqueToken not found in cache: %v", cacheErr)
-				RequireAuth(rw, req, la.config, cacheErr)
-				return
-			}
-			// TODO: validate JWT token which were set by us anyway?
-			req.Header["Authorization"] = []string{"Bearer " + string(item.Value)}
-			// TODO: Response instead of using next, la.next.ServeHTTP(rw, req)
-			return
-		}
-	}
-	// ########
-
-	// #### Token ####
-	// opaque token requested?
-	if oauth2.IsOpaqueTokenRequest(req) {
-		opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
-		if err != nil {
-			log.Printf("opaque token error: %v", err)
-			RequireAuth(rw, req, la.config, err)
-			return
-		}
-		var authCodeRequest oauth2.AuthCode
-		la.gobByteBuf.Reset()
-		item, cacheErr := la.cache.Get("code" + opaqueTokenRequest.Code)
-		if cacheErr != nil {
-			log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
-			RequireAuth(rw, req, la.config, cacheErr)
-			return
-		}
-		_, bufErr := la.gobByteBuf.Write(item.Value)
-		if bufErr != nil {
-			log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
-			RequireAuth(rw, req, la.config, bufErr)
-			return
-		}
-		gobErr := la.gobDecoder.Decode(&authCodeRequest)
-		if gobErr != nil {
-			log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
-			RequireAuth(rw, req, la.config, gobErr)
-			return
-		}
-		accessToken, err := opaqueTokenRequest.AccessToken(600)
-		if err != nil {
-			log.Printf("opaque token error: %v", err)
-			RequireAuth(rw, req, la.config, err)
-			return
-		}
-		jsonAT, errJson := accessToken.Json()
-		if errJson != nil {
-			log.Printf("Could not get JSON of AccessToken: %v", errJson)
-			RequireAuth(rw, req, la.config, errJson)
-			return
-		}
-		log.Printf("AccessToken: %s", string(jsonAT))
-
-		// start a user session
-		// creates a JWT and store it in the cache until it gets deleted by logout of the user or expiration
-		// create JWT
-		type JWTClaims struct {
-			jwtv5.RegisteredClaims
-		}
-		claims := JWTClaims{
-			jwtv5.RegisteredClaims{
-				ExpiresAt: jwtv5.NewNumericDate(time.Now().Add(24 * time.Hour)),
-				IssuedAt:  jwtv5.NewNumericDate(time.Now()),
-				NotBefore: jwtv5.NewNumericDate(time.Now()),
-				Issuer:    "",
-				Subject:   "",
-			},
-		}
-		// TODO: Add user data like its role to the JWT
-		jwt := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
-		ss, jwtErr := jwt.SignedString([]byte("TODO"))
-		if jwtErr != nil {
-			log.Printf("Could not create JWT: %v", jwtErr)
-			RequireAuth(rw, req, la.config, jwtErr)
-			return
-		}
-		// TODO: check access token is not set yet
-		sessionCacheErr := la.cache.Set(&memcache.Item{
-			Key:        accessToken.AccessToken,
-			Value:      []byte(ss),
-			Expiration: int32(time.Now().Unix() + int64(accessToken.ExpiresIn)), // int32 unix time lasts until 2038
-		})
-		if sessionCacheErr != nil {
-			log.Printf("Could not store session in cache: %v", sessionCacheErr)
-			RequireAuth(rw, req, la.config, sessionCacheErr)
-			return
-		}
-		ResponseToken(rw, req, la.config, jsonAT)
-		return
-	}
-	// ##############
-
-	session, _ := store.Get(req, la.config.CacheCookieName)
-	LoggerDEBUG.Printf("Session details: %v", session)
-
-	username, password, ok := req.BasicAuth()
-	username = strings.ToLower(username)
-
-	la.config.Username = username
-
-	if !ok {
-		err = errors.New("no valid 'Authorization: Basic xxxx' header found in request")
-		RequireAuth(rw, req, la.config, err)
-		return
-	}
-
-	// #### TODO: PKCE ####
-	// code_verifier provided -> opaque token requested
-	code_verifier := req.FormValue("code_verifier")
-	pkceOK := false
-	if code_verifier != "" {
-		if code_challenge, ok := session.Values["code_challenge"]; ok {
-			h256CodeVerifier := crypto.Hash.New(crypto.SHA256)
-			_, err := h256CodeVerifier.Write([]byte(code_verifier))
-			if err != nil {
-				// TODO: hashing error
-			}
-			pkceOK = base64.RawURLEncoding.EncodeToString(h256CodeVerifier.Sum(nil)) == code_challenge
-		}
-	}
-	// ###############
-
-	// #### Auth ####
-	// auth code requested?
-	if oauth2.IsAuthCodeRequest(req) {
-		// authcode requested
-
-		authCodeRequest, err := oauth2.AuthCodeFromRequest(req)
-		if err != nil {
-			// TODO: response with invalid_request
-			/*
-					the authorization endpoint MUST return the authorization
-				error response with the "error" value set to "invalid_request".  The
-				"error_description" or the response of "error_uri" SHOULD explain the
-				nature of error, e.g., code challenge required.
-			*/
-			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, la.config, err)
-			return
-		}
-		// rfc6749 4.1.1
-		// response_type 		- REQUIRED. MUST be "code"
-		// client_id 				- REQUIRED. client identifier
-		// redirect_uri 		- OPTIONAL.
-		// scope 						- OPTIONAL. scope of the access request
-		// state 						- RECOMMENDED. opaque value set by client. Needs to be included in redirect of user-agent back to the client.
-		// example:
-		// GET /authorize?response_type=code&client_id=s6BhdRkqt3&state=xyz
-		//     &redirect_uri=https%3A%2F%2Fclient%2Eexample%2Ecom%2Fcb HTTP/1.1
-		// Host: server.example.com
-
-		// TODO: check whether the client_id is known and get the registered redirect_uri(s) of this client
-		//       if redirect_uris were registered, the set redirect_uri parameter value needs to be one of
-		//       the registered redirect_uris
-		// if redirect_uri == "" {
-		// 	// TODO: take registered redirect_uri
-		// 	redirect_uri = "http://localhost/token"
-		// }
-		//
-		// LoggerINFO.Printf("redirect_uri: %s", redirect_uri)
-		// LoggerINFO.Printf("scope: %s", scope)
-		// LoggerINFO.Printf("state: %s", state)
-		// all required parameters valid. Authenticate resource owner.
-		conn, err := ldapIdp.Connect(la.config)
-		if err != nil {
-			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, la.config, err)
-			return
-		}
-		defer conn.Close()
-
-		isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, la.config, username, password)
-
-		if !isValidUser {
-			defer conn.Close()
-			LoggerERROR.Printf("%s", err)
-			LoggerERROR.Printf("Authentication failed")
-			RequireAuth(rw, req, la.config, err)
-			return
-		}
-
-		isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, la.config, entry, username)
-		if !isAuthorized {
-			defer conn.Close()
-			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, la.config, err)
-			return
-		}
-
-		LoggerINFO.Printf("Authentication succeeded")
-
-		// rfc6749 4.1.2
-		// auth code added as query parameter to the redirection URI using "application/x-www-form-urlencoded" format
-		// code - REQUIRED. generated by auth server. MUST expire shortly. Maximum lifetime of 10 minuted RECOMMENDED.
-		// 									client MUST NOT use the code more than once. If auth code is used more than once,
-		// 									auth server MUST deny the request and SHOULD revoke all tokens previously issued based on
-		//  								that auth code. auth code is bound to client_id and redirect_uri.
-		// state - REQUIRED. is "state" parameter was present in client auth request. exact value received from client.
-		// example:
-		// HTTP/1.1 302 Found
-		// Location: https://client.example.com/cb?code=SplxlOBeZQQYbYS6WxSbIA
-		//           &state=xyz
-		// store authcodes with expiration timestamp, redirect_uri, scope in a server side cache
-		code, err := authCodeRequest.Code() // TODO: generate valid auth code with code_challenge encrypted in it
-		// TODO: cache auth code together with client
-		// we use memcached as it is easy to use, efficient and has no complex license
-		// as we store authcodes and tokens, it would be ok
-		// if the client needs to reauthenticate
-		// if memcached failed to return the authcode/token due to internal error
-		la.gobByteBuf.Reset()
-		gobErr := la.gobEncoder.Encode(authCodeRequest)
-		if gobErr != nil {
-			log.Print(gobErr)
-			// TODO: Response error
-		}
-		errCache := la.cache.Set(&memcache.Item{
-			Key:   "code" + code,
-			Value: la.gobByteBuf.Bytes(),
-		})
-		if errCache != nil {
-			LoggerERROR.Printf("cache: Could not set cache entry: %v", errCache)
-			// TODO: Response error
-		}
-		ResponseAuthCode(rw, req, la.config, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
-		return
-	}
-	// ##############
-
-	if auth, ok := session.Values["authenticated"].(bool); ok && auth && pkceOK {
-		if session.Values["username"] == username {
-			LoggerDEBUG.Printf("Session token Valid! Passing request...")
-			ServeAuthenicated(la, session, rw, req)
-			return
-		}
-		err = fmt.Errorf("session user: '%s' != Auth user: '%s'. Please, reauthenticate", session.Values["username"], username)
-		// Invalidate session.
-		session.Values["authenticated"] = false
-		session.Values["username"] = username
-		session.Options.MaxAge = -1
-		session.Save(req, rw)
-		RequireAuth(rw, req, la.config, err)
-		return
-	}
-
-	LoggerDEBUG.Println("No session found! Trying to authenticate in LDAP")
-
-	conn, err := ldapIdp.Connect(la.config)
-	if err != nil {
-		LoggerERROR.Printf("%s", err)
-		RequireAuth(rw, req, la.config, err)
-		return
-	}
-
-	isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, la.config, username, password)
-
-	if !isValidUser {
-		defer conn.Close()
-		LoggerERROR.Printf("%s", err)
-		LoggerERROR.Printf("Authentication failed")
-		RequireAuth(rw, req, la.config, err)
-		return
-	}
-
-	isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, la.config, entry, username)
-	if !isAuthorized {
-		defer conn.Close()
-		LoggerERROR.Printf("%s", err)
-		RequireAuth(rw, req, la.config, err)
-		return
-	}
-
-	defer conn.Close()
-
-	LoggerINFO.Printf("Authentication succeeded")
-
-	// Set user as authenticated.
-	// session.Values["cc"] = code_challenge // must be encrypted
-	session.Values["username"] = username
-	session.Values["ldap-dn"] = entry.DN
-	session.Values["ldap-cn"] = entry.GetAttributeValue("cn")
-	session.Values["authenticated"] = true
-	session.Save(req, rw)
-
-	ServeAuthenicated(la, session, rw, req)
-}
+// func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+// 	var err error
+//
+// 	// #### JWT ####
+// 	// opaque token sent from client, replace it with a JWT
+// 	if authValue, ok := req.Header["Authorization"]; ok {
+// 		if len(strings.Fields(authValue[0])) == 2 && strings.Fields(authValue[0])[0] == "Bearer" {
+// 			opaqueToken := strings.Fields(authValue[0])[1]
+// 			// do we have a session with this opaqueToken?
+// 			item, cacheErr := la.cache.Get(opaqueToken)
+// 			if cacheErr != nil {
+// 				log.Printf("JWT: opaqueToken not found in cache: %v", cacheErr)
+// 				RequireAuth(rw, req, la.config.Ldap, cacheErr)
+// 				return
+// 			}
+// 			// TODO: validate JWT token which were set by us anyway?
+// 			req.Header["Authorization"] = []string{"Bearer " + string(item.Value)}
+// 			// TODO: Response instead of using next, la.next.ServeHTTP(rw, req)
+// 			return
+// 		}
+// 	}
+// 	// ########
+//
+// 	// #### Token ####
+// 	// opaque token requested?
+// 	if oauth2.IsOpaqueTokenRequest(req) {
+// 		opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
+// 		if err != nil {
+// 			log.Printf("opaque token error: %v", err)
+// 			RequireAuth(rw, req, la.config.Ldap, err)
+// 			return
+// 		}
+// 		var authCodeRequest oauth2.AuthCode
+// 		la.gobByteBuf.Reset()
+// 		item, cacheErr := la.cache.Get("code" + opaqueTokenRequest.Code)
+// 		if cacheErr != nil {
+// 			log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
+// 			RequireAuth(rw, req, la.config.Ldap, cacheErr)
+// 			return
+// 		}
+// 		_, bufErr := la.gobByteBuf.Write(item.Value)
+// 		if bufErr != nil {
+// 			log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
+// 			RequireAuth(rw, req, la.config.Ldap, bufErr)
+// 			return
+// 		}
+// 		gobErr := la.gobDecoder.Decode(&authCodeRequest)
+// 		if gobErr != nil {
+// 			log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
+// 			RequireAuth(rw, req, la.config.Ldap, gobErr)
+// 			return
+// 		}
+// 		accessToken, err := opaqueTokenRequest.AccessToken(600)
+// 		if err != nil {
+// 			log.Printf("opaque token error: %v", err)
+// 			RequireAuth(rw, req, la.config.Ldap, err)
+// 			return
+// 		}
+// 		jsonAT, errJson := accessToken.Json()
+// 		if errJson != nil {
+// 			log.Printf("Could not get JSON of AccessToken: %v", errJson)
+// 			RequireAuth(rw, req, la.config.Ldap, errJson)
+// 			return
+// 		}
+// 		log.Printf("AccessToken: %s", string(jsonAT))
+//
+// 		// start a user session
+// 		// creates a JWT and store it in the cache until it gets deleted by logout of the user or expiration
+// 		// create JWT
+// 		type JWTClaims struct {
+// 			jwtv5.RegisteredClaims
+// 		}
+// 		claims := JWTClaims{
+// 			jwtv5.RegisteredClaims{
+// 				ExpiresAt: jwtv5.NewNumericDate(time.Now().Add(24 * time.Hour)),
+// 				IssuedAt:  jwtv5.NewNumericDate(time.Now()),
+// 				NotBefore: jwtv5.NewNumericDate(time.Now()),
+// 				Issuer:    "",
+// 				Subject:   "",
+// 			},
+// 		}
+// 		// TODO: Add user data like its role to the JWT
+// 		jwt := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
+// 		ss, jwtErr := jwt.SignedString([]byte("TODO"))
+// 		if jwtErr != nil {
+// 			log.Printf("Could not create JWT: %v", jwtErr)
+// 			RequireAuth(rw, req, la.config.Ldap, jwtErr)
+// 			return
+// 		}
+// 		// TODO: check access token is not set yet
+// 		sessionCacheErr := la.cache.Set(&memcache.Item{
+// 			Key:        accessToken.AccessToken,
+// 			Value:      []byte(ss),
+// 			Expiration: int32(time.Now().Unix() + int64(accessToken.ExpiresIn)), // int32 unix time lasts until 2038
+// 		})
+// 		if sessionCacheErr != nil {
+// 			log.Printf("Could not store session in cache: %v", sessionCacheErr)
+// 			RequireAuth(rw, req, la.config.Ldap, sessionCacheErr)
+// 			return
+// 		}
+// 		ResponseToken(rw, req, la.config.Ldap, jsonAT)
+// 		return
+// 	}
+// 	// ##############
+//
+// 	session, _ := store.Get(req, la.config.Ldap.CacheCookieName)
+// 	LoggerDEBUG.Printf("Session details: %v", session)
+//
+// 	username, password, ok := req.BasicAuth()
+// 	username = strings.ToLower(username)
+//
+// 	la.config.Ldap.Username = username
+//
+// 	if !ok {
+// 		err = errors.New("no valid 'Authorization: Basic xxxx' header found in request")
+// 		RequireAuth(rw, req, la.config.Ldap, err)
+// 		return
+// 	}
+//
+// 	// #### TODO: PKCE ####
+// 	// code_verifier provided -> opaque token requested
+// 	code_verifier := req.FormValue("code_verifier")
+// 	pkceOK := false
+// 	if code_verifier != "" {
+// 		if code_challenge, ok := session.Values["code_challenge"]; ok {
+// 			h256CodeVerifier := crypto.Hash.New(crypto.SHA256)
+// 			_, err := h256CodeVerifier.Write([]byte(code_verifier))
+// 			if err != nil {
+// 				// TODO: hashing error
+// 			}
+// 			pkceOK = base64.RawURLEncoding.EncodeToString(h256CodeVerifier.Sum(nil)) == code_challenge
+// 		}
+// 	}
+// 	// ###############
+//
+// 	// #### Auth ####
+// 	// auth code requested?
+// 	if oauth2.IsAuthCodeRequest(req) {
+// 		// authcode requested
+//
+// 		authCodeRequest, err := oauth2.AuthCodeFromRequest(req)
+// 		if err != nil {
+// 			// TODO: response with invalid_request
+// 			/*
+// 					the authorization endpoint MUST return the authorization
+// 				error response with the "error" value set to "invalid_request".  The
+// 				"error_description" or the response of "error_uri" SHOULD explain the
+// 				nature of error, e.g., code challenge required.
+// 			*/
+// 			LoggerERROR.Printf("%s", err)
+// 			RequireAuth(rw, req, la.config.Ldap, err)
+// 			return
+// 		}
+// 		// rfc6749 4.1.1
+// 		// response_type 		- REQUIRED. MUST be "code"
+// 		// client_id 				- REQUIRED. client identifier
+// 		// redirect_uri 		- OPTIONAL.
+// 		// scope 						- OPTIONAL. scope of the access request
+// 		// state 						- RECOMMENDED. opaque value set by client. Needs to be included in redirect of user-agent back to the client.
+// 		// example:
+// 		// GET /authorize?response_type=code&client_id=s6BhdRkqt3&state=xyz
+// 		//     &redirect_uri=https%3A%2F%2Fclient%2Eexample%2Ecom%2Fcb HTTP/1.1
+// 		// Host: server.example.com
+//
+// 		// TODO: check whether the client_id is known and get the registered redirect_uri(s) of this client
+// 		//       if redirect_uris were registered, the set redirect_uri parameter value needs to be one of
+// 		//       the registered redirect_uris
+// 		// if redirect_uri == "" {
+// 		// 	// TODO: take registered redirect_uri
+// 		// 	redirect_uri = "http://localhost/token"
+// 		// }
+// 		//
+// 		if !slices.ContainsFunc(la.config.OAuth2.Clients, func(c *config.OAuth2Client) bool {
+// 			return c.ClientId == authCodeRequest.ClientId
+// 		}) {
+// 			LoggerERROR.Printf("ClientId \"%s\" not registered. Available clients: %v", authCodeRequest.ClientId, la.config.OAuth2.Clients)
+// 			RequireAuth(rw, req, la.config.Ldap, fmt.Errorf("Bad Request"))
+// 			return
+// 		}
+// 		// LoggerINFO.Printf("redirect_uri: %s", redirect_uri)
+// 		// LoggerINFO.Printf("scope: %s", scope)
+// 		// LoggerINFO.Printf("state: %s", state)
+// 		// all required parameters valid. Authenticate resource owner.
+// 		conn, err := ldapIdp.Connect(la.config.Ldap)
+// 		if err != nil {
+// 			LoggerERROR.Printf("%s", err)
+// 			RequireAuth(rw, req, la.config.Ldap, err)
+// 			return
+// 		}
+// 		defer conn.Close()
+//
+// 		isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, la.config.Ldap, username, password)
+//
+// 		if !isValidUser {
+// 			defer conn.Close()
+// 			LoggerERROR.Printf("%s", err)
+// 			LoggerERROR.Printf("Authentication failed")
+// 			RequireAuth(rw, req, la.config.Ldap, err)
+// 			return
+// 		}
+//
+// 		isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, la.config.Ldap, entry, username)
+// 		if !isAuthorized {
+// 			defer conn.Close()
+// 			LoggerERROR.Printf("%s", err)
+// 			RequireAuth(rw, req, la.config.Ldap, err)
+// 			return
+// 		}
+//
+// 		LoggerINFO.Printf("Authentication succeeded")
+//
+// 		// rfc6749 4.1.2
+// 		// auth code added as query parameter to the redirection URI using "application/x-www-form-urlencoded" format
+// 		// code - REQUIRED. generated by auth server. MUST expire shortly. Maximum lifetime of 10 minuted RECOMMENDED.
+// 		// 									client MUST NOT use the code more than once. If auth code is used more than once,
+// 		// 									auth server MUST deny the request and SHOULD revoke all tokens previously issued based on
+// 		//  								that auth code. auth code is bound to client_id and redirect_uri.
+// 		// state - REQUIRED. is "state" parameter was present in client auth request. exact value received from client.
+// 		// example:
+// 		// HTTP/1.1 302 Found
+// 		// Location: https://client.example.com/cb?code=SplxlOBeZQQYbYS6WxSbIA
+// 		//           &state=xyz
+// 		// store authcodes with expiration timestamp, redirect_uri, scope in a server side cache
+// 		code, err := authCodeRequest.Code() // TODO: generate valid auth code with code_challenge encrypted in it
+// 		// TODO: cache auth code together with client
+// 		// we use memcached as it is easy to use, efficient and has no complex license
+// 		// as we store authcodes and tokens, it would be ok
+// 		// if the client needs to reauthenticate
+// 		// if memcached failed to return the authcode/token due to internal error
+// 		la.gobByteBuf.Reset()
+// 		gobErr := la.gobEncoder.Encode(authCodeRequest)
+// 		if gobErr != nil {
+// 			log.Print(gobErr)
+// 			// TODO: Response error
+// 		}
+// 		errCache := la.cache.Set(&memcache.Item{
+// 			Key:   "code" + code,
+// 			Value: la.gobByteBuf.Bytes(),
+// 		})
+// 		if errCache != nil {
+// 			LoggerERROR.Printf("cache: Could not set cache entry: %v", errCache)
+// 			// TODO: Response error
+// 		}
+// 		ResponseAuthCode(rw, req, la.config.Ldap, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
+// 		return
+// 	}
+// 	// ##############
+//
+// 	if auth, ok := session.Values["authenticated"].(bool); ok && auth && pkceOK {
+// 		if session.Values["username"] == username {
+// 			LoggerDEBUG.Printf("Session token Valid! Passing request...")
+// 			ServeAuthenicated(la, session, rw, req)
+// 			return
+// 		}
+// 		err = fmt.Errorf("session user: '%s' != Auth user: '%s'. Please, reauthenticate", session.Values["username"], username)
+// 		// Invalidate session.
+// 		session.Values["authenticated"] = false
+// 		session.Values["username"] = username
+// 		session.Options.MaxAge = -1
+// 		session.Save(req, rw)
+// 		RequireAuth(rw, req, la.config.Ldap, err)
+// 		return
+// 	}
+//
+// 	LoggerDEBUG.Println("No session found! Trying to authenticate in LDAP")
+//
+// 	conn, err := ldapIdp.Connect(la.config.Ldap)
+// 	if err != nil {
+// 		LoggerERROR.Printf("%s", err)
+// 		RequireAuth(rw, req, la.config.Ldap, err)
+// 		return
+// 	}
+//
+// 	isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, la.config.Ldap, username, password)
+//
+// 	if !isValidUser {
+// 		defer conn.Close()
+// 		LoggerERROR.Printf("%s", err)
+// 		LoggerERROR.Printf("Authentication failed")
+// 		RequireAuth(rw, req, la.config.Ldap, err)
+// 		return
+// 	}
+//
+// 	isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, la.config.Ldap, entry, username)
+// 	if !isAuthorized {
+// 		defer conn.Close()
+// 		LoggerERROR.Printf("%s", err)
+// 		RequireAuth(rw, req, la.config.Ldap, err)
+// 		return
+// 	}
+//
+// 	defer conn.Close()
+//
+// 	LoggerINFO.Printf("Authentication succeeded")
+//
+// 	// Set user as authenticated.
+// 	// session.Values["cc"] = code_challenge // must be encrypted
+// 	session.Values["username"] = username
+// 	session.Values["ldap-dn"] = entry.DN
+// 	session.Values["ldap-cn"] = entry.GetAttributeValue("cn")
+// 	session.Values["authenticated"] = true
+// 	session.Save(req, rw)
+//
+// 	ServeAuthenicated(la, session, rw, req)
+// }
 
 func ServeAuthenicated(la *LdapAuth, session *sessions.Session, rw http.ResponseWriter, req *http.Request) {
 	// Sanitize Some Headers Infos.
-	if la.config.ForwardUsername {
+	if la.config.Ldap.ForwardUsername {
 		username := session.Values["username"].(string)
 
 		req.URL.User = url.User(username)
-		req.Header[la.config.ForwardUsernameHeader] = []string{username}
+		req.Header[la.config.Ldap.ForwardUsernameHeader] = []string{username}
 
-		if la.config.ForwardExtraLdapHeaders && la.config.SearchFilter != "" {
+		if la.config.Ldap.ForwardExtraLdapHeaders && la.config.Ldap.SearchFilter != "" {
 			userDN := session.Values["ldap-dn"].(string)
 			userCN := session.Values["ldap-cn"].(string)
 			req.Header["Ldap-Extra-Attr-DN"] = []string{userDN}
@@ -405,7 +410,7 @@ func ServeAuthenicated(la *LdapAuth, session *sessions.Session, rw http.Response
 	 Prevent expose username and password on Header
 	 if ForwardAuthorization option is set.
 	*/
-	if !la.config.ForwardAuthorization {
+	if !la.config.Ldap.ForwardAuthorization {
 		req.Header.Del("Authorization")
 	}
 
@@ -537,7 +542,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 				nature of error, e.g., code challenge required.
 			*/
 			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, auth.Auth.config, err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 			return
 		}
 		// rfc6749 4.1.1
@@ -558,34 +563,41 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		// 	// TODO: take registered redirect_uri
 		// 	redirect_uri = "http://localhost/token"
 		// }
+		if auth.Auth.config.OAuth2 != nil && !slices.ContainsFunc(auth.Auth.config.OAuth2.Clients, func(c *oauth2.OAuth2Client) bool {
+			return c != nil && c.ClientId == authCodeRequest.ClientId
+		}) {
+			LoggerERROR.Printf("ClientId \"%s\" not registered. Available clients: %v", authCodeRequest.ClientId, auth.Auth.config.OAuth2.Clients)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
+			return
+		}
 		//
 		// LoggerINFO.Printf("redirect_uri: %s", redirect_uri)
 		// LoggerINFO.Printf("scope: %s", scope)
 		// LoggerINFO.Printf("state: %s", state)
 		// all required parameters valid. Authenticate resource owner.
-		conn, err := ldapIdp.Connect(auth.Auth.config)
+		conn, err := ldapIdp.Connect(auth.Auth.config.Ldap)
 		if err != nil {
 			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, auth.Auth.config, err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 			return
 		}
 		defer conn.Close()
 
-		isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, auth.Auth.config, username, password)
+		isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, auth.Auth.config.Ldap, username, password)
 
 		if !isValidUser {
 			defer conn.Close()
 			LoggerERROR.Printf("%s", err)
 			LoggerERROR.Printf("Authentication failed")
-			RequireAuth(rw, req, auth.Auth.config, err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 			return
 		}
 
-		isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, auth.Auth.config, entry, username)
+		isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, auth.Auth.config.Ldap, entry, username)
 		if !isAuthorized {
 			defer conn.Close()
 			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, auth.Auth.config, err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 			return
 		}
 
@@ -623,7 +635,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 			LoggerERROR.Printf("cache: Could not set cache entry: %v", errCache)
 			// TODO: Response error
 		}
-		ResponseAuthCode(rw, req, auth.Auth.config, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
+		ResponseAuthCode(rw, req, auth.Auth.config.Ldap, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
 		return
 	}
 	// ##############
@@ -636,7 +648,7 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 		opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
 		if err != nil {
 			log.Printf("opaque token error: %v", err)
-			RequireAuth(rw, req, auth.Auth.config, err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 			return
 		}
 		var authCodeRequest oauth2.AuthCode
@@ -644,31 +656,31 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 		item, cacheErr := auth.Auth.cache.Get("code" + opaqueTokenRequest.Code)
 		if cacheErr != nil {
 			log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
-			RequireAuth(rw, req, auth.Auth.config, cacheErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, cacheErr)
 			return
 		}
 		_, bufErr := auth.Auth.gobByteBuf.Write(item.Value)
 		if bufErr != nil {
 			log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
-			RequireAuth(rw, req, auth.Auth.config, bufErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, bufErr)
 			return
 		}
 		gobErr := auth.Auth.gobDecoder.Decode(&authCodeRequest)
 		if gobErr != nil {
 			log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
-			RequireAuth(rw, req, auth.Auth.config, gobErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, gobErr)
 			return
 		}
 		accessToken, err := opaqueTokenRequest.AccessToken(600)
 		if err != nil {
 			log.Printf("opaque token error: %v", err)
-			RequireAuth(rw, req, auth.Auth.config, err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 			return
 		}
 		jsonAT, errJson := accessToken.Json()
 		if errJson != nil {
 			log.Printf("Could not get JSON of AccessToken: %v", errJson)
-			RequireAuth(rw, req, auth.Auth.config, errJson)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, errJson)
 			return
 		}
 		log.Printf("AccessToken: %s", string(jsonAT))
@@ -693,7 +705,7 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 		ss, jwtErr := jwt.SignedString([]byte("TODO"))
 		if jwtErr != nil {
 			log.Printf("Could not create JWT: %v", jwtErr)
-			RequireAuth(rw, req, auth.Auth.config, jwtErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, jwtErr)
 			return
 		}
 		// TODO: check access token is not set yet
@@ -704,10 +716,10 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 		})
 		if sessionCacheErr != nil {
 			log.Printf("Could not store session in cache: %v", sessionCacheErr)
-			RequireAuth(rw, req, auth.Auth.config, sessionCacheErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, sessionCacheErr)
 			return
 		}
-		ResponseToken(rw, req, auth.Auth.config, jsonAT)
+		ResponseToken(rw, req, auth.Auth.config.Ldap, jsonAT)
 		return
 	}
 	// ##############
@@ -723,7 +735,7 @@ func (auth *AuthAPI) GetJwt(rw http.ResponseWriter, req *http.Request) {
 			item, cacheErr := auth.Auth.cache.Get(opaqueToken)
 			if cacheErr != nil {
 				log.Printf("JWT: opaqueToken \"%s\" not found in cache: %v", opaqueToken, cacheErr)
-				RequireAuth(rw, req, auth.Auth.config, cacheErr)
+				RequireAuth(rw, req, auth.Auth.config.Ldap, cacheErr)
 				return
 			}
 			// TODO: validate JWT token which were set by us anyway?
@@ -731,11 +743,11 @@ func (auth *AuthAPI) GetJwt(rw http.ResponseWriter, req *http.Request) {
 			rw.WriteHeader(http.StatusOK)
 		} else {
 			LoggerERROR.Printf("Bad Request. Authorization header malformed: %v", authValue)
-			RequireAuth(rw, req, auth.Auth.config, fmt.Errorf("Bad Request"))
+			RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 		}
 	} else {
 		LoggerERROR.Printf("Bad Request. No Authorization header: %v", req.Header)
-		RequireAuth(rw, req, auth.Auth.config, fmt.Errorf("Bad Request"))
+		RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 	}
 	// ########
 }

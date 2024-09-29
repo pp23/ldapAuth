@@ -22,7 +22,7 @@ import (
 // Represents an authentication code
 type AuthCode struct {
 	ResponseType  string
-	ClientID      string
+	ClientId      string
 	RedirectURI   *url.URL
 	Scope         string
 	State         string
@@ -39,7 +39,7 @@ func IsAuthCodeRequest(req *http.Request) bool {
 func AuthCodeFromRequest(req *http.Request) (*AuthCode, error) {
 	authCode := AuthCode{
 		ResponseType:  req.FormValue("response_type"),
-		ClientID:      req.FormValue("client_id"),
+		ClientId:      req.FormValue("client_id"),
 		RedirectURI:   nil,
 		Scope:         req.FormValue("scope"),
 		State:         req.FormValue("state"),
@@ -49,7 +49,7 @@ func AuthCodeFromRequest(req *http.Request) (*AuthCode, error) {
 		// error. see rfc6749 4.1.2.1
 		return nil, fmt.Errorf("response_type not set to 'code'")
 	}
-	if authCode.ClientID == "" {
+	if authCode.ClientId == "" {
 		// error. see rfc6749 4.1.2.1
 		// ResponseError(rw, req, redirect_uri, state, errors.New(), "client_id not set")
 		return nil, fmt.Errorf("invalid_request")
