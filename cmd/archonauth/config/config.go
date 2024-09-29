@@ -2,18 +2,14 @@ package config
 
 import (
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
+	"github.com/pp23/ldapAuth/internal/oauth2"
 	"gopkg.in/yaml.v2"
 )
-
-// OAuth2 config
-type OAuth2 struct {
-	RedirectURI string `json:"redirect_uri" yaml:"redirect_uri"`
-}
 
 // Config the plugin configuration.
 type Config struct {
 	Ldap    *ldapIdp.Config `json:"ldap,omitempty" yaml:"ldap,omitempty"`
-	OAuth2  *OAuth2         `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	OAuth2  *oauth2.Config  `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 	Port    uint16          `json:"port,omitempty" yaml:"port,omitempty"`
 	Address string          `json:"address,omitempty" yaml:"address,omitempty"`
 }
@@ -21,6 +17,7 @@ type Config struct {
 func CreateConfig() *Config {
 	return &Config{
 		Ldap:    ldapIdp.CreateConfig(),
+		OAuth2:  oauth2.CreateConfig(),
 		Port:    3000,
 		Address: "0.0.0.0",
 	}
