@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/gorilla/sessions"
@@ -62,6 +63,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 
 	if config.JwtTokenUri == "" {
 		log.Fatalf("No JwtTokenUri set in config. Expected URI to internal JWT archonauth-api endpoint.")
+	}
+
+	if ok, err := regexp.MatchString("^[a-z]+://.*$", config.JwtTokenUri); !ok {
+		log.Fatalf("Required valid schema prefix like \"http://\" in JwtTokenUri \"%s\". Error: %v", config.JwtTokenUri, err)
 	}
 
 	LoggerINFO.Printf("Starting %s Middleware...", name)
