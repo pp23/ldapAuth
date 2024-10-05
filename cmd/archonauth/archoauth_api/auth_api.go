@@ -70,7 +70,7 @@ func New(ctx context.Context, config *config.Config) (*LdapAuth, error) {
 	var buf bytes.Buffer
 	return &LdapAuth{
 		config:     config,
-		cache:      memcache.New("127.0.0.1:11211"), // TODO: make it configurable
+		cache:      memcache.New(config.Cache.Host),
 		gobEncoder: gob.NewEncoder(&buf),
 		gobDecoder: gob.NewDecoder(&buf),
 		gobByteBuf: &buf,
