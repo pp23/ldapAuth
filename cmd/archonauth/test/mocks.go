@@ -131,10 +131,19 @@ func (mockTcpServer *MockTCPServer) Run(
 ) error {
 	mockTcpServer.stop = false
 	mockTcpServer.hostport = ":" + strconv.Itoa(int(port))
-	l, err := net.Listen("tcp", mockTcpServer.hostport)
-	if err != nil {
-		errHandler(err)
-		return err
+	var l net.Listener
+	var errListener error
+	// simple retry if port from previous server instance not immediately available
+	for i := 0; i < 3; i++ {
+		l, errListener = net.Listen("tcp", mockTcpServer.hostport)
+		if errListener == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if errListener != nil {
+		errHandler(errListener)
+		return errListener
 	}
 	mockTcpServer.l = l
 	for !mockTcpServer.stop {
