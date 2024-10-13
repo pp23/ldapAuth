@@ -15,10 +15,16 @@ import (
 	archonauth "github.com/pp23/ldapAuth/cmd/archonauth/archoauth_api"
 	"github.com/pp23/ldapAuth/cmd/archonauth/config"
 	"github.com/pp23/ldapAuth/internal/api"
+	"github.com/pp23/ldapAuth/internal/oauth2"
 )
 
 func CreateConfig() *config.Config {
-	return config.CreateConfig()
+	cfg := config.CreateConfig()
+	cfg.OAuth2.Clients = append(cfg.OAuth2.Clients, &oauth2.OAuth2Client{
+		ClientId:    "abc",
+		RedirectUri: "/token",
+	})
+	return cfg
 }
 
 func NewAuthApi(cfg *config.Config, t *testing.T) *archonauth.AuthAPI {
