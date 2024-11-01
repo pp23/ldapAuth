@@ -1,5 +1,7 @@
 package ldapIdp
 
+import "time"
+
 // Config the plugin configuration.
 type Config struct {
 	Enabled                    bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
@@ -31,6 +33,7 @@ type Config struct {
 	AllowedGroups              []string `json:"allowedGroups,omitempty" yaml:"allowedGroups,omitempty"`
 	AllowedUsers               []string `json:"allowedUsers,omitempty" yaml:"allowedUsers,omitempty"`
 	Username                   string
+	ConnectTimeout             time.Duration
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -65,5 +68,6 @@ func CreateConfig() *Config {
 		AllowedGroups:              nil,
 		AllowedUsers:               nil,
 		Username:                   "",
+		ConnectTimeout:             3000 * time.Millisecond,
 	}
 }

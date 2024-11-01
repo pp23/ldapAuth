@@ -16,6 +16,7 @@ import (
 	"github.com/pp23/ldapAuth/cmd/archonauth/config"
 	"github.com/pp23/ldapAuth/internal/api"
 	"github.com/pp23/ldapAuth/internal/oauth2"
+	"github.com/pp23/ldapAuth/internal/provider"
 )
 
 func CreateConfig() *config.Config {
@@ -23,6 +24,11 @@ func CreateConfig() *config.Config {
 	cfg.OAuth2.Clients = append(cfg.OAuth2.Clients, &oauth2.OAuth2Client{
 		ClientId:    "abc",
 		RedirectUri: "/token",
+		ClientSecret: &provider.ProviderSelector{
+			File: &provider.FileProvider{
+				Path: "/tmp/testClientCredentials.txt",
+			},
+		},
 	})
 	return cfg
 }
