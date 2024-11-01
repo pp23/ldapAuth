@@ -60,6 +60,11 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()
+	defer func() {
+		mockMemcachedServer.Close()
+		mockLdapServer.Close()
+		wg.Wait()
+	}()
 	cfg.Ldap.Port = 1389
 	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword) // password gets not checked as we mock the ldap server which accepts every user
 	handler.ServeHTTP(w, req)                                    // request an auth code. The user auth is done against the mocked ldap server
@@ -100,9 +105,6 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 	if len(respBody) != 0 {
 		t.Fatalf("Expected no body, got %s [%v]", string(respBody), len(respBody))
 	}
-	mockMemcachedServer.Close()
-	mockLdapServer.Close()
-	wg.Wait()
 }
 
 // exchange an auth code with an access token
@@ -160,6 +162,11 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 			test.MockBindResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
+	}()
+	defer func() {
+		mockMemcachedServer.Close()
+		mockLdapServer.Close()
+		wg.Wait()
 	}()
 	cfg.Ldap.Port = 1389
 	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword)
@@ -227,9 +234,6 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		t.Errorf("Expected expiration of at least 600s, got %v", resObj["expires_in"].(float64))
 	}
 	// TODO: test whether the token is not a JWT as we expect only an opaque token
-	mockMemcachedServer.Close()
-	mockLdapServer.Close()
-	wg.Wait()
 }
 
 func TestJWTTokenSuccess(t *testing.T) {
@@ -273,6 +277,11 @@ func TestJWTTokenSuccess(t *testing.T) {
 			test.MockBindResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
+	}()
+	defer func() {
+		mockMemcachedServer.Close()
+		mockLdapServer.Close()
+		wg.Wait()
 	}()
 	cfg.Ldap.Port = 1389
 	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword)
@@ -340,7 +349,4 @@ func TestJWTTokenSuccess(t *testing.T) {
 		}
 		t.Logf("JWT: %v", jwt)
 	}
-	mockMemcachedServer.Close()
-	mockLdapServer.Close()
-	wg.Wait()
 }

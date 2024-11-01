@@ -71,7 +71,7 @@ func Connect(config *Config) (*ldap.Conn, error) {
 	}
 
 	if u.Scheme == "ldap" && config.StartTLS {
-		conn, err = ldap.DialURL(address)
+		conn, err = ldap.DialURL(address, ldap.DialWithDialer(&net.Dialer{Timeout: config.ConnectTimeout}))
 		if err == nil {
 			err = conn.StartTLS(tlsCfg)
 		}

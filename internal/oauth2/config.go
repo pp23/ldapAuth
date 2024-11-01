@@ -1,9 +1,14 @@
 package oauth2
 
+import (
+	"github.com/pp23/ldapAuth/internal/provider"
+)
+
 // OAuth2 client struct
 type OAuth2Client struct {
-	ClientId    string `json:"client_id" yaml:"client_id"`
-	RedirectUri string `json:"redirect_uri" yaml:"redirect_uri"`
+	ClientId     string                     `json:"client_id" yaml:"client_id"`
+	RedirectUri  string                     `json:"redirect_uri" yaml:"redirect_uri"`
+	ClientSecret *provider.ProviderSelector `json:"client_secret" yaml:"client_secret"`
 }
 
 // OAuth2 config
