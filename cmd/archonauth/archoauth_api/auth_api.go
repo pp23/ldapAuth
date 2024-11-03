@@ -250,29 +250,29 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		//     &redirect_uri=https%3A%2F%2Fclient%2Eexample%2Ecom%2Fcb HTTP/1.1
 		// Host: server.example.com
 
-		// TODO: check whether the client_id is known and get the registered redirect_uri(s) of this client
-		//       if redirect_uris were registered, the set redirect_uri parameter value needs to be one of
-		//       the registered redirect_uris
-		// if redirect_uri == "" {
-		// 	// TODO: take registered redirect_uri
-		// 	redirect_uri = "http://localhost/token"
-		// }
+		// check whether the client_id is known and get the registered redirect_uri(s) of this client
+		// if redirect_uris were registered, the set redirect_uri parameter value needs to be one of
+		// the registered redirect_uris
+		// the client does not need to authenticate here. Client authentication happens when the client requests a token. (see rfc6749, 4.1 (D))
 		client := func() *oauth2.OAuth2Client {
+			if auth.Auth.config.OAuth2 == nil {
+				return nil
+			}
 			for _, c := range auth.Auth.config.OAuth2.Clients {
 				if c.ClientId == authCodeRequest.ClientId {
 					return c
 				}
 			}
 			return nil
-		}
-		LoggerINFO.Printf("client: %v", client())
-		if auth.Auth.config.OAuth2 == nil || client() == nil {
+		}()
+		if client == nil {
 			LoggerERROR.Printf("ClientId \"%s\" not registered. Available clients: %v", authCodeRequest.ClientId, auth.Auth.config.OAuth2.Clients)
 			RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 			return
 		}
-		if client().RedirectUri != authCodeRequest.RedirectURI.RequestURI() {
-			LoggerERROR.Printf("ClientId \"%s\" has requested redirect uri \"%s\" not registered. Registered redirect uris: %v", client().ClientId, authCodeRequest.RedirectURI.RequestURI(), client().RedirectUri)
+
+		if client.RedirectUri != authCodeRequest.RedirectURI.RequestURI() {
+			LoggerERROR.Printf("ClientId \"%s\" has requested redirect uri \"%s\" not registered. Registered redirect uris: %v", client.ClientId, authCodeRequest.RedirectURI.RequestURI(), client.RedirectUri)
 			RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 			return
 		}
@@ -366,33 +366,46 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 		RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 		return
 	}
+	// parse the request
 	opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
 	if err != nil {
 		log.Printf("opaque token error: %v", err)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 		return
 	}
-	var authCodeRequest oauth2.AuthCode
-	auth.Auth.gobByteBuf.Reset()
+	// get the cached data belonging to the authCode of the request
 	item, cacheErr := auth.Auth.cache.Get("code" + opaqueTokenRequest.Code)
 	if cacheErr != nil {
 		log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, cacheErr)
 		return
 	}
+	// deserialize the cached data into an oauth2.AuthCode
+	auth.Auth.gobByteBuf.Reset()
 	_, bufErr := auth.Auth.gobByteBuf.Write(item.Value)
 	if bufErr != nil {
 		log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, bufErr)
 		return
 	}
+	var authCodeRequest oauth2.AuthCode
 	gobErr := auth.Auth.gobDecoder.Decode(&authCodeRequest)
 	if gobErr != nil {
 		log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, gobErr)
 		return
 	}
-	accessToken, err := opaqueTokenRequest.AccessToken(600)
+	// TODO: Check PKCE encoded in the authCode with that from the request
+	// TODO: Check client credentials and authenticate the client
+
+	// see rfc6749 4.1.3
+	// TODO: require client auth for confidential clients or for any client that was issued client credentials
+	// TODO: authenticate the client
+	// TODO: ensure authCode was issued to the client
+	// TODO: ensure redirect_uri is present if it was included in the initial auth request. Values need to be identical.
+
+	// authCode found in cache and is therefore valid. Generate an access token.
+	accessToken, err := opaqueTokenRequest.GenerateAccessToken(600)
 	if err != nil {
 		log.Printf("opaque token error: %v", err)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, err)

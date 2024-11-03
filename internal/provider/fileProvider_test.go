@@ -15,7 +15,7 @@ func TestFileReadSuccess(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 	testFile := filepath.Join(tmpDir, "testFileReadSuccess.txt")
-	if err := os.WriteFile(testFile, []byte("testFileReadSuccess"), 0666); err != nil {
+	if err := os.WriteFile(testFile, []byte(expectedData), 0666); err != nil {
 		t.Fatalf("Could not write test file: %v", err)
 	}
 	var fp Provider = &FileProvider{}

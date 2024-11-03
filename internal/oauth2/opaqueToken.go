@@ -76,7 +76,7 @@ func OpaqueTokenFromRequest(req *http.Request) (*OpaqueTokenRequest, error) {
 	return &opaqueTokenRequest, nil
 }
 
-func (tokenRequest *OpaqueTokenRequest) AccessToken(expSeconds uint64) (*OpaqueToken, error) {
+func (tokenRequest *OpaqueTokenRequest) GenerateAccessToken(expSeconds uint64) (*OpaqueToken, error) {
 	at, errAt := utils.RandString(36)
 	if errAt != nil {
 		return nil, errAt
