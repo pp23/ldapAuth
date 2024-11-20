@@ -369,14 +369,14 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 	// parse the request
 	opaqueTokenRequest, err := oauth2.OpaqueTokenFromRequest(req)
 	if err != nil {
-		log.Printf("opaque token error: %v", err)
+		LoggerERROR.Printf("opaque token error: %v", err)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 		return
 	}
 	// get the cached data belonging to the authCode of the request
 	item, cacheErr := auth.Auth.cache.Get("code" + opaqueTokenRequest.Code)
 	if cacheErr != nil {
-		log.Printf("opaqueTokenRequest cache error: %v", cacheErr)
+		LoggerERROR.Printf("opaqueTokenRequest cache error: %v", cacheErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, cacheErr)
 		return
 	}
@@ -384,14 +384,14 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 	auth.Auth.gobByteBuf.Reset()
 	_, bufErr := auth.Auth.gobByteBuf.Write(item.Value)
 	if bufErr != nil {
-		log.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
+		LoggerERROR.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, bufErr)
 		return
 	}
 	var authCodeRequest oauth2.AuthCode
 	gobErr := auth.Auth.gobDecoder.Decode(&authCodeRequest)
 	if gobErr != nil {
-		log.Printf("opaqueTokenRequest decoding error: %v", gobErr)
+		LoggerERROR.Printf("opaqueTokenRequest decoding error: %v", gobErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, gobErr)
 		return
 	}
@@ -407,17 +407,17 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 	// authCode found in cache and is therefore valid. Generate an access token.
 	accessToken, err := opaqueTokenRequest.GenerateAccessToken(600)
 	if err != nil {
-		log.Printf("opaque token error: %v", err)
+		LoggerERROR.Printf("opaque token error: %v", err)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, err)
 		return
 	}
 	jsonAT, errJson := accessToken.Json()
 	if errJson != nil {
-		log.Printf("Could not get JSON of AccessToken: %v", errJson)
+		LoggerERROR.Printf("Could not get JSON of AccessToken: %v", errJson)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, errJson)
 		return
 	}
-	log.Printf("AccessToken: %s", string(jsonAT))
+	LoggerERROR.Printf("AccessToken: %s", string(jsonAT))
 
 	// start a user session
 	// creates a JWT and store it in the cache until it gets deleted by logout of the user or expiration
@@ -438,7 +438,7 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 	jwt := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	ss, jwtErr := jwt.SignedString([]byte("TODO"))
 	if jwtErr != nil {
-		log.Printf("Could not create JWT: %v", jwtErr)
+		LoggerERROR.Printf("Could not create JWT: %v", jwtErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, jwtErr)
 		return
 	}
@@ -449,7 +449,7 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 		Expiration: int32(time.Now().Unix() + int64(accessToken.ExpiresIn)), // int32 unix time lasts until 2038
 	})
 	if sessionCacheErr != nil {
-		log.Printf("Could not store session in cache: %v", sessionCacheErr)
+		LoggerERROR.Printf("Could not store session in cache: %v", sessionCacheErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, sessionCacheErr)
 		return
 	}
