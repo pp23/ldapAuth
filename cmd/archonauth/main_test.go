@@ -186,7 +186,7 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
 	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
 	reqRedirect := httptest.NewRequest(
-		"GET", // TODO: POST? What does the RFC tell here?
+		"POST",
 		locationURL.String(),
 		nil,
 	)
@@ -302,7 +302,7 @@ func TestJWTTokenSuccess(t *testing.T) {
 	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
 	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
 	reqRedirect := httptest.NewRequest(
-		"GET",
+		"POST",
 		locationURL.String(),
 		nil,
 	)
@@ -322,17 +322,17 @@ func TestJWTTokenSuccess(t *testing.T) {
 		t.Error(errJson)
 	}
 	if at, ok := resObj["access_token"]; ok {
-		getReq := httptest.NewRequest(
-			"GET",
+		jwtReq := httptest.NewRequest(
+			"POST",
 			"http://localhost/jwt",
 			nil,
 		)
-		getReq.Header["Authorization"] = []string{"Bearer " + at.(string)}
+		jwtReq.Header["Authorization"] = []string{"Bearer " + at.(string)}
 		w = httptest.NewRecorder()
-		handler.ServeHTTP(w, getReq)
+		handler.ServeHTTP(w, jwtReq)
 		resp := w.Result()
 		if resp.StatusCode != 200 {
-			t.Errorf("Expected status code 200 from GET request, got %v", resp.Status)
+			t.Errorf("Expected status code 200, got %v", resp.Status)
 		}
 		jwtBytes, err := ioutil.ReadAll(resp.Body)
 		if err != nil {

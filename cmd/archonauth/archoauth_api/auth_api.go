@@ -358,7 +358,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 	// ##############
 }
 
-func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
+func (auth *AuthAPI) PostToken(rw http.ResponseWriter, req *http.Request) {
 	// #### Token ####
 	// opaque token requested?
 	if !oauth2.IsOpaqueTokenRequest(req) {
@@ -458,7 +458,7 @@ func (auth *AuthAPI) GetToken(rw http.ResponseWriter, req *http.Request) {
 	// ##############
 }
 
-func (auth *AuthAPI) GetJwt(rw http.ResponseWriter, req *http.Request) {
+func (auth *AuthAPI) PostJwt(rw http.ResponseWriter, req *http.Request) {
 	// #### JWT ####
 	// opaque token sent from client, replace it with a JWT
 	if authValue, ok := req.Header["Authorization"]; ok {

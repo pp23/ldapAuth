@@ -124,7 +124,7 @@ func GetOpaqueToken(handler http.Handler, cfg *config.Config, testCfg TestConfig
 	reqBodyValues.Add("redirect_uri", excpectedRedirectURI)
 	reqBodyValues.Add("client_id", "abc") // required, if the client is not authenticating with the authorization server
 	reqRedirect := httptest.NewRequest(
-		"GET",
+		"POST",
 		locationURL.String(),
 		nil,
 	)

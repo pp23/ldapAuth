@@ -19,15 +19,16 @@ paths:
         "401":
           description: Unauthorized
   /token:
-    get:
+    post:
       description: Get an access token for an authenticated user
+      # TODO: Parse token request from x-www-form-urlencoded body
       responses:
         "200":
           description: Success.
         "401":
           description: Unauthorized.
   /jwt:
-    get:
+    post:
       security:
         - AccessTokenAuth: []
       description: >-

@@ -136,7 +136,7 @@ func (la *LdapAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	opaqueToken := strings.Fields(authHeader)[1]
 	// request the JWT with the opaqueToken
-	jwtReq, reqErr := http.NewRequest("GET", la.config.JwtTokenUri, nil)
+	jwtReq, reqErr := http.NewRequest("POST", la.config.JwtTokenUri, nil)
 	if reqErr != nil {
 		LoggerERROR.Printf("Could not create request to JWT URI: %v", reqErr)
 		RequireAuth(rw, req, la.config, fmt.Errorf("Bad Request"))
