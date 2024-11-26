@@ -1,0 +1,14 @@
+---
+ldap:
+  enabled: true
+  attribute: cn
+  baseDn: ou=users,dc=example,dc=org
+  logLevel: DEBUG
+  port: 1389
+  url: ldap://openldap
+oauth2:
+  clients:
+    - client_id: "client"
+      redirect_uri: "/token"
+cache:
+  host: "memcached:11211"

@@ -1,0 +1,97 @@
+version: "2"
+services:
+  traefik:
+    image: traefik:v2.11.2
+    command:
+    - "--log.level=Debug"
+    - "--providers.file.filename=/config/traefik.yaml"
+    - "--providers.docker=true"
+    - "--providers.docker.exposedbydefault=false"
+    - "--experimental.localPlugins.ldapAuth.modulename=github.com/pp23/ldapAuth"
+    - "--entryPoints.web.address=:80"
+    ports:
+      - "8080:80"
+    volumes:
+      - type: bind
+        source: "$LOCAL_LDAP_AUTH_PLUGIN_PATH"
+        target: "/plugins-local/src/github.com/pp23/ldapAuth"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./traefik.yaml:/config/traefik.yaml:ro"
+    networks:
+      - ldap
+      - traefik
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.localhost`)"
+      - "traefik.http.routers.whoami.entrypoints=web"
+      - "traefik.http.routers.whoami.middlewares=ldapAuth@file"  # get opaque token when an authCode gets provided in the code-parameter
+    networks:
+      - traefik
+  archonauth:
+    image: "archonauth:1.4.1"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=archonauth_traefik"
+      - "traefik.http.routers.authCode.rule=Host(`whoami.localhost`) && Path(`/auth`)"  # get the auth code. code_challenge parameter needs to be set
+      - "traefik.http.routers.authCode.entrypoints=web"
+      - "traefik.http.routers.authToken.rule=Host(`whoami.localhost`) && Path(`/token`)"  # get opaque token when an authCode gets provided in the code-parameter
+      - "traefik.http.routers.authToken.entrypoints=web"
+      - "traefik.http.routers.authJwt.rule=Host(`whoami.localhost`) && Path(`/jwt`)"  # get opaque token when an authCode gets provided in the code-parameter
+      - "traefik.http.routers.authJwt.entrypoints=web"
+    ports:
+      - "3000:3000"
+    networks:
+      - traefik
+      - ldap
+      - auth
+    volumes:
+      - "./archonauth.yaml:/etc/archonauth/config.yaml"
+  memcached:
+    image: "memcached:1.6.29-alpine3.20"
+    networks:
+      - auth
+  openldap:
+    image: bitnami/openldap:2.6.3
+    ports:
+      - "1389:1389"
+      - "1636:1636"
+    environment:
+      - LDAP_ADMIN_USERNAME=admin
+      - LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD
+      - LDAP_ROOT=dc=example,dc=org
+      - LDAP_ADMIN_DN=cn=admin,dc=example,dc=org
+      - BITNAMI_DEBUG=true
+      - EXAMPLE_USER_PASSWORD=$EXAMPLE_USER_PASSWORD
+    networks:
+      - ldap
+    volumes:
+      - "ldap_data:/bitnami/openldap"
+      - "./argon2.module.sh:/docker-entrypoint-initdb.d/0001.argon2.module.sh"
+      - "./example-user-argon2.sh:/docker-entrypoint-initdb.d/0002.example-user-argon2.sh"
+    healthcheck:
+      # no other connection test tools in the image
+      test:
+        [
+          "CMD-SHELL",
+          'openssl s_client -connect localhost:1389 | test -n "`grep -o ''CONNECTED''`"',
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 1
+      start_period: 5s
+volumes:
+  ldap_data:
+    driver: local
+networks:
+  ldap:
+    driver: bridge
+    attachable: true
+  traefik:
+    name: archonauth_traefik
+    driver: bridge
+    attachable: false
+  auth:
+    driver: bridge
+    attachable: false
