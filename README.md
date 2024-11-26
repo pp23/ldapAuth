@@ -4,6 +4,35 @@ A full file based configurable authorization server with a LDAP IdP backend.
 
 ## Development
 
+### Testing
+
+* E2E-Tests can be performed with a local docker-compose system setup:
+
+```
+LOCAL_LDAP_AUTH_PLUGIN_PATH="${PWD}"    # Path to this repository
+LDAP_ADMIN_PASSWORD="<ADMIN_PASSWORD>"  # Admin password of the OpenLDAP server
+EXAMPLE_USER_PASSWORD="<PASSWORD>"      # Password of the test user which gets created in the OpenLDAP server on init
+docker-compose -f traefik.dockercompose.yaml up
+```
+
+* The [traefik.dockercompose.yaml](/traefik.dockercompose.yaml) starts
+  * a Traefik with the Archonauth plugin
+  * a Traefik whoami sample application
+  * an OpenLDAP with Argon2 module setup and an example user with Argon2 password
+  * an Archonauth
+  * a Memcache as cache for Archonauth
+
+* Get an AuthCode:
+```
+  curl -v -u "example:<EXAMPLE_USER_PASSWORD>" \
+   'http://localhost:3000/auth?response_type=code&client_id=client&redirect_uri=http://localhost:3000/token&scope=r&code_challenge=a'
+```
+* Get an access token:
+```
+curl -v -X POST \
+  'http://localhost:3000/token?code=abc&grant_type=authorization_code'
+```
+
 ### OpenLDAP
 
 OpenLDAP is the database which contains all users of the system. The passwords are stored encrypted in the OpenLDAP database.
