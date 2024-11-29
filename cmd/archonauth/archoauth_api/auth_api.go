@@ -355,6 +355,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		ResponseAuthCode(rw, req, auth.Auth.config.Ldap, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
 		return
 	}
+	RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 	// ##############
 }
 
