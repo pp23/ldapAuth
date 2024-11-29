@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sync"
 	"testing"
+	"time"
 
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 
@@ -17,6 +18,78 @@ import (
 
 // global cache
 var mockMemcache test.MockMemCache = test.NewMockMemCache()
+
+// requests GET /auth without any parameters
+// expectation: 401 response
+func TestAuthCodeGet1ResponseUnauthorized(t *testing.T) {
+	testCfg, testCfgErr := test.TestConfigFromEnv()
+	if testCfgErr != nil {
+		t.Fatal(testCfgErr)
+	}
+	cfg := test.CreateConfig()
+	authApi := test.NewAuthApi(cfg, t)
+	handler := NewChiRouter(authApi)
+
+	expectedResCode := http.StatusUnauthorized
+	req := httptest.NewRequest(
+		"GET",
+		"http://localhost/auth",
+		nil,
+	)
+	w := httptest.NewRecorder()
+	// mock servers should not get called, but avoid 401 responses because they are missing
+	t.Log("MockLdapServer URL: " + cfg.Ldap.URL)
+	mockLdapServer := test.MockTCPServer{}
+	mockMemcachedServer := test.MockTCPServer{}
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	// memcachedServer
+	t.Log("Start MockMemcachedServer")
+	go func() {
+		defer wg.Done()
+		mockMemcachedServer.Run(
+			11211,
+			mockMemcache.MockMemCachedMsgHandler,
+			func(err error) { t.Error("Error: ", err) },
+		)
+	}()
+	// LDAPServer
+	go func() {
+		defer wg.Done()
+		mockLdapServer.Run(
+			1389,
+			test.MockBindResponse,
+			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
+		)
+	}()
+	defer func() {
+		time.Sleep(1 * time.Second) // workaround to wait until server got started so that it can get properly closed
+		mockMemcachedServer.Close()
+		mockLdapServer.Close()
+		wg.Wait()
+	}()
+	cfg.Ldap.Port = 1389
+	req.SetBasicAuth(testCfg.TestUsername, testCfg.TestPassword) // password gets not checked as we mock the ldap server which accepts every user
+	handler.ServeHTTP(w, req)                                    // request an auth code. The user auth is done against the mocked ldap server
+	resp := w.Result()
+	t.Log(resp.StatusCode)
+	// auth code reponse test
+	if resp.StatusCode != expectedResCode {
+		t.Fatalf("Expected status code %v, got %v", expectedResCode, resp.StatusCode)
+	}
+	_, err := resp.Location()
+	if err == nil {
+		t.Fatal("Location header in response. Expected none.")
+	}
+	// TODO: body shall show "Bad request" error
+	// respBody, err := io.ReadAll(resp.Body)
+	// if err != nil {
+	// 	t.Fatal("Error while reading body: ", err)
+	// }
+	// if len(respBody) != 0 {
+	// 	t.Fatalf("Expected no body, got %s [%v]", string(respBody), len(respBody))
+	// }
+}
 
 func TestAuthCodeResponseSuccess(t *testing.T) {
 	testCfg, testCfgErr := test.TestConfigFromEnv()
