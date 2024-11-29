@@ -33,6 +33,7 @@ services:
     image: "archonauth:1.4.1"
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=archonauth_traefik"
       - "traefik.http.routers.authCode.rule=Host(`whoami.localhost`) && Path(`/auth`)"  # get the auth code. code_challenge parameter needs to be set
       - "traefik.http.routers.authCode.entrypoints=web"
       - "traefik.http.routers.authToken.rule=Host(`whoami.localhost`) && Path(`/token`)"  # get opaque token when an authCode gets provided in the code-parameter
@@ -88,6 +89,7 @@ networks:
     driver: bridge
     attachable: true
   traefik:
+    name: archonauth_traefik
     driver: bridge
     attachable: false
   auth:
