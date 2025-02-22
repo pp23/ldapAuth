@@ -51,6 +51,7 @@ func main() {
 	authApi := archonauth.AuthAPI{
 		Auth: ldapAuth,
 	}
+	log.Printf("Starting server on %s:%d", cfg.Address, cfg.Port)
 	errServer := http.ListenAndServe(cfg.Address+":"+strconv.Itoa(int(cfg.Port)), NewChiRouter(&authApi))
 	if errServer != nil {
 		log.Fatal(errServer)

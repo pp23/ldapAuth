@@ -52,7 +52,7 @@ func AuthCodeFromRequest(req *http.Request) (*AuthCode, error) {
 	if authCode.ClientId == "" {
 		// error. see rfc6749 4.1.2.1
 		// ResponseError(rw, req, redirect_uri, state, errors.New(), "client_id not set")
-		return nil, fmt.Errorf("invalid_request")
+		return nil, fmt.Errorf("client_id not set")
 	}
 	if authCode.CodeChallenge == "" {
 		return nil, fmt.Errorf("code_challenge required")

@@ -222,8 +222,9 @@ type AuthAPI struct {
 func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 	// #### Auth ####
 
+	username, password, okBasicAuth := req.BasicAuth()
 	// auth code requested?
-	if username, password, ok := req.BasicAuth(); ok && oauth2.IsAuthCodeRequest(req) {
+	if okBasicAuth && oauth2.IsAuthCodeRequest(req) {
 		// authcode requested
 
 		authCodeRequest, err := oauth2.AuthCodeFromRequest(req)
@@ -235,8 +236,8 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 				"error_description" or the response of "error_uri" SHOULD explain the
 				nature of error, e.g., code challenge required.
 			*/
-			LoggerERROR.Printf("%s", err)
-			RequireAuth(rw, req, auth.Auth.config.Ldap, err)
+			LoggerERROR.Printf("Could not create AuthCode from request: %s", err)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, err) // TODO: set error object according to rfc
 			return
 		}
 		// rfc6749 4.1.1
@@ -266,7 +267,11 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 			return nil
 		}()
 		if client == nil {
-			LoggerERROR.Printf("ClientId \"%s\" not registered. Available clients: %v", authCodeRequest.ClientId, auth.Auth.config.OAuth2.Clients)
+			var availableClientIds []string
+			for _, c := range auth.Auth.config.OAuth2.Clients {
+				availableClientIds = append(availableClientIds, c.ClientId)
+			}
+			LoggerERROR.Printf("ClientId \"%s\" not registered. Available clients: %v", authCodeRequest.ClientId, strings.Join(availableClientIds, ","))
 			RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 			return
 		}
@@ -355,7 +360,15 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		ResponseAuthCode(rw, req, auth.Auth.config.Ldap, code, authCodeRequest.State, authCodeRequest.RedirectURI.String())
 		return
 	}
-	RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
+
+	if !okBasicAuth {
+		LoggerERROR.Print("Credentials missing: BasicAuth required to get auth code")
+		RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request."))
+	}
+	if !oauth2.IsAuthCodeRequest(req) {
+		LoggerERROR.Print("AuthCode request missing: ?response_type=code")
+		RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request."))
+	}
 	// ##############
 }
 
