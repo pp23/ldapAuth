@@ -59,7 +59,7 @@ func OpaqueTokenFromRequest(req *http.Request) (*OpaqueTokenRequest, error) {
 	opaqueTokenRequest := OpaqueTokenRequest{
 		GrantType:   req.FormValue("grant_type"),
 		Code:        req.FormValue("code"),
-		RedirectURI: nil,
+		RedirectURI: nil, // TODO: redirect_uri should match the redirect_uri passed with the auth code request (?)
 		ClientID:    req.FormValue("client_id"),
 	}
 	if opaqueTokenRequest.GrantType != "authorization_code" {

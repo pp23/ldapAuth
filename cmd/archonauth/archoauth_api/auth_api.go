@@ -38,11 +38,8 @@ var (
 
 // LdapAuth Struct plugin.
 type LdapAuth struct {
-	config     *config.Config
-	cache      *memcache.Client
-	gobEncoder *gob.Encoder
-	gobDecoder *gob.Decoder
-	gobByteBuf *bytes.Buffer
+	config *config.Config
+	cache  *memcache.Client
 }
 
 // New created a new LdapAuth plugin.
@@ -68,20 +65,32 @@ func New(ctx context.Context, config *config.Config) (*LdapAuth, error) {
 
 	gob.Register(oauth2.AuthCode{})
 	gob.Register(oauth2.OpaqueToken{})
-	var buf bytes.Buffer
 	return &LdapAuth{
-		config:     config,
-		cache:      memcache.New(config.Cache.Host),
-		gobEncoder: gob.NewEncoder(&buf),
-		gobDecoder: gob.NewDecoder(&buf),
-		gobByteBuf: &buf,
+		config: config,
+		cache:  memcache.New(config.Cache.Host),
 	}, nil
 }
 
-func (la *LdapAuth) encodeToBytes(obj interface{}) ([]byte, error) {
-	la.gobByteBuf.Reset()
-	err := la.gobEncoder.Encode(obj)
-	return la.gobByteBuf.Bytes(), err
+func encodeToBytes[T any](obj T) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	err := encoder.Encode(obj)
+	return buf.Bytes(), err
+}
+
+func decodeFromBytes[T any](data []byte) (*T, error) {
+	var buf bytes.Buffer
+	var out T
+	decoder := gob.NewDecoder(&buf)
+	_, bufErr := buf.Write(data)
+	if bufErr != nil {
+		return nil, bufErr
+	}
+	gobErr := decoder.Decode(&out)
+	if gobErr != nil {
+		return nil, gobErr
+	}
+	return &out, nil
 }
 
 func ServeAuthenicated(la *LdapAuth, session *sessions.Session, rw http.ResponseWriter, req *http.Request) {
@@ -276,8 +285,8 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		if client.RedirectUri != authCodeRequest.RedirectURI.RequestURI() {
-			LoggerERROR.Printf("ClientId \"%s\" has requested redirect uri \"%s\" not registered. Registered redirect uris: %v", client.ClientId, authCodeRequest.RedirectURI.RequestURI(), client.RedirectUri)
+		if client.RedirectUri != authCodeRequest.RedirectURI.String() {
+			LoggerERROR.Printf("ClientId \"%s\" has requested redirect uri \"%s\" not registered. Registered redirect uris: %v", client.ClientId, authCodeRequest.RedirectURI.String(), client.RedirectUri)
 			RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 			return
 		}
@@ -343,15 +352,14 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		// as we store authcodes and tokens, it would be ok
 		// if the client needs to reauthenticate
 		// if memcached failed to return the authcode/token due to internal error
-		auth.Auth.gobByteBuf.Reset()
-		gobErr := auth.Auth.gobEncoder.Encode(authCodeRequest)
+		data, gobErr := encodeToBytes(authCodeRequest)
 		if gobErr != nil {
 			log.Print(gobErr)
 			// TODO: Response error
 		}
 		errCache := auth.Auth.cache.Set(&memcache.Item{
 			Key:   "code" + code,
-			Value: auth.Auth.gobByteBuf.Bytes(),
+			Value: data,
 		})
 		if errCache != nil {
 			LoggerERROR.Printf("cache: Could not set cache entry: %v", errCache)
@@ -375,7 +383,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 func (auth *AuthAPI) PostToken(rw http.ResponseWriter, req *http.Request) {
 	// #### Token ####
 	// opaque token requested?
-	if !oauth2.IsOpaqueTokenRequest(req) {
+	if !oauth2.IsOpaqueTokenRequest(req) { // TODO: for better error logging, return missing parameters
 		LoggerERROR.Printf("Bad Request. No OpaqueTokenRequest: %v", req)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, fmt.Errorf("Bad Request"))
 		return
@@ -395,15 +403,7 @@ func (auth *AuthAPI) PostToken(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// deserialize the cached data into an oauth2.AuthCode
-	auth.Auth.gobByteBuf.Reset()
-	_, bufErr := auth.Auth.gobByteBuf.Write(item.Value)
-	if bufErr != nil {
-		LoggerERROR.Printf("opaqueTokenRequest decoding buffer error: %v", bufErr)
-		RequireAuth(rw, req, auth.Auth.config.Ldap, bufErr)
-		return
-	}
-	var authCodeRequest oauth2.AuthCode
-	gobErr := auth.Auth.gobDecoder.Decode(&authCodeRequest)
+	_, gobErr := decodeFromBytes[oauth2.AuthCode](item.Value)
 	if gobErr != nil {
 		LoggerERROR.Printf("opaqueTokenRequest decoding error: %v", gobErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, gobErr)
