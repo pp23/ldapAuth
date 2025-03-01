@@ -13,8 +13,8 @@ import (
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 
 	"github.com/pp23/ldapAuth"
-	config "github.com/pp23/ldapAuth/cmd/archonauth/config"
-	"github.com/pp23/ldapAuth/cmd/archonauth/test"
+	"github.com/pp23/ldapAuth/internal/config"
+	"github.com/pp23/ldapAuth/internal/test"
 )
 
 func TestDemo(t *testing.T) {

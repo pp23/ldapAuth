@@ -1,9 +1,13 @@
 package config
 
 import (
+	"fmt"
+	"reflect"
+
 	"github.com/pp23/ldapAuth/internal/cache"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
+	"github.com/pp23/ldapAuth/internal/utils"
 	"gopkg.in/yaml.v2"
 )
 
@@ -32,4 +36,20 @@ func (cfg *Config) FromYaml(data []byte) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// LogConfigParams print confs when logLevel is DEBUG.
+func LogConfigParams(config *Config, logger *utils.Logger) {
+	/*
+		Make this to prevent error msg
+		"Error in Go routine: reflect: call of reflect.Value.NumField on ptr Value"
+	*/
+	c := *config
+
+	v := reflect.ValueOf(c)
+	typeOfS := v.Type()
+
+	for i := 0; i < v.NumField(); i++ {
+		logger.DEBUG.Printf(fmt.Sprint(typeOfS.Field(i).Name, " => '", v.Field(i).Interface(), "'"))
+	}
 }

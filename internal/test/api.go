@@ -12,18 +12,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	archonauth "github.com/pp23/ldapAuth/cmd/archonauth/archoauth_api"
-	"github.com/pp23/ldapAuth/cmd/archonauth/config"
 	"github.com/pp23/ldapAuth/internal/api"
+	archonauth "github.com/pp23/ldapAuth/internal/apiImpl"
+	"github.com/pp23/ldapAuth/internal/config"
 	"github.com/pp23/ldapAuth/internal/oauth2"
 	"github.com/pp23/ldapAuth/internal/provider"
+	"github.com/pp23/ldapAuth/internal/server"
+	"github.com/pp23/ldapAuth/internal/utils"
 )
 
 func CreateConfig() *config.Config {
 	cfg := config.CreateConfig()
 	cfg.OAuth2.Clients = append(cfg.OAuth2.Clients, &oauth2.OAuth2Client{
 		ClientId:    "abc",
-		RedirectUri: "/token",
+		RedirectUri: "https://localhost:1234/token",
 		ClientSecret: &provider.ProviderSelector{
 			File: &provider.FileProvider{
 				Path: "/tmp/testClientCredentials.txt",
@@ -42,9 +44,13 @@ func NewAuthApi(cfg *config.Config, t *testing.T) *archonauth.AuthAPI {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &archonauth.AuthAPI{
-		Auth: ldapAuth,
+	logger := utils.NewLogger()
+	logger.SetLevel(cfg.Ldap.LogLevel)
+	authApi, errApi := server.NewAuthApi(ldapAuth, logger, cfg)
+	if errApi != nil {
+		t.Fatal(errApi)
 	}
+	return authApi
 }
 
 func NewAuthApiHandler(authApi *archonauth.AuthAPI) http.Handler {
