@@ -54,7 +54,7 @@ func TestAuthCodeGet1ResponseUnauthorized(t *testing.T) {
 		defer wg.Done()
 		mockLdapServer.Run(
 			1389,
-			test.MockBindResponse,
+			test.MockLdapResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()
@@ -125,7 +125,7 @@ func TestAuthCodeResponseSuccess(t *testing.T) {
 		defer wg.Done()
 		mockLdapServer.Run(
 			1389,
-			test.MockBindResponse,
+			test.MockLdapResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()

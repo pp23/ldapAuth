@@ -2,6 +2,7 @@ package oauth2
 
 import (
 	"github.com/pp23/ldapAuth/internal/provider"
+	"github.com/pp23/ldapAuth/pkg/mapper"
 )
 
 // OAuth2 client struct
@@ -9,6 +10,8 @@ type OAuth2Client struct {
 	ClientId     string                     `json:"client_id" yaml:"client_id"`
 	RedirectUri  string                     `json:"redirect_uri" yaml:"redirect_uri"`
 	ClientSecret *provider.ProviderSelector `json:"client_secret" yaml:"client_secret"`
+	// client specific mappings. Allows to modify Key/Values from IdP before stored in JWT.
+	IdpClaimMappers []*mapper.Mappings `json:"mappers,omitempty" yaml:"mappers,omitempty"`
 }
 
 // OAuth2 config

@@ -81,7 +81,7 @@ func RunMockLdapServer(wg *sync.WaitGroup, t *testing.T) *MockTCPServer {
 		defer wg.Done()
 		mockLdapServer.Run(
 			1389,
-			MockBindResponse,
+			MockLdapResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()

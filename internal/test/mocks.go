@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net"
 	"regexp"
 	"strconv"
@@ -55,7 +57,7 @@ func (mockMemcache MockMemCache) MockMemCachedMsgHandler(br *bufio.Reader, bw *b
 		b, err := br.ReadSlice('\n')
 		if err != nil {
 			fmt.Printf("Read from connection: %v\r\n", err)
-			return nil
+			return err
 		}
 		line := string(b)
 		fmt.Printf("string: %s", line)
@@ -166,9 +168,12 @@ func (mockTcpServer *MockTCPServer) Run(
 			defer mockTcpServer.wg.Done()
 			br := bufio.NewReader(conn)
 			bw := bufio.NewWriter(conn)
-			msgErr := msgHandler(br, bw)
+			var msgErr error
+			for msgErr = nil; msgErr == nil; {
+				msgErr = msgHandler(br, bw)
+			}
 			if msgErr != nil {
-				if !errors.Is(msgErr, io.EOF) {
+				if !errors.Is(msgErr, io.EOF) && !errors.Is(msgErr, net.ErrClosed) {
 					fmt.Printf("msgHandler error %v", msgErr)
 					errHandler(msgErr)
 				} else {
@@ -191,6 +196,299 @@ func (mockTcpServer *MockTCPServer) Close() {
 		c.Close()
 	}
 	mockTcpServer.wg.Wait()
+}
+
+const (
+	BEGIN_LDAPMESSAGE_SEQ             = 1
+	BEGIN_BIND_REQUEST_PROTOCOL_OP    = 2
+	BEGIN_SEARCH_REQUEST_PROTOCOL_OP  = 3
+	BEGIN_SET_OF_REQUESTED_ATTRIBUTES = 4
+)
+
+func MockLdapResponse(br *bufio.Reader, bw *bufio.Writer) error {
+	// read the LDAP request
+	state := 0
+	lop := 0
+	msgLen := math.MaxInt
+	for l := 0; l < msgLen; {
+		log.Printf("Read %d/%d", l, msgLen)
+		b, err := br.ReadByte()
+		if err != nil {
+			return err
+		}
+		log.Printf("Read byte: %x", b)
+		switch b {
+		case 0x30: // Sequence
+			b2, err := br.ReadByte()
+			if err != nil {
+				return err
+			}
+			if msgLen == math.MaxInt {
+				msgLen = int(b2)
+			}
+			// if sequence is a part of an op, decrement the >0 length of the op (lop) accordingly
+			if lop > 0 {
+				lop -= 2 // code + length
+			}
+			if state == BEGIN_SEARCH_REQUEST_PROTOCOL_OP {
+				state = BEGIN_SET_OF_REQUESTED_ATTRIBUTES
+			} else {
+				state = BEGIN_LDAPMESSAGE_SEQ
+			}
+			log.Printf("%x %x -- Begin the LDAPMessage sequence || %d", b, b2, state)
+		case 0x02:
+			s, err := br.ReadByte()
+			if err != nil {
+				return err
+			}
+			l++
+			i := make([]byte, s)
+			n, err2 := br.Read(i)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			switch state {
+			case BEGIN_LDAPMESSAGE_SEQ:
+				log.Printf("%x %x -- The message ID", b, i)
+			case BEGIN_BIND_REQUEST_PROTOCOL_OP:
+				log.Printf("%x %x -- The LDAP protocol version", b, i)
+				lop -= 2 // code + length
+				lop -= n
+			case BEGIN_SEARCH_REQUEST_PROTOCOL_OP:
+				// time/size limit
+				lop -= 2 // code + length
+				lop -= n
+			}
+		case 0x60: // Bind request
+			s, err := br.ReadByte()
+			if err != nil {
+				return nil
+			}
+			l++
+			lop = int(s)
+			log.Printf("%x %x -- Begin the bind request protocol op", b, s)
+			state = BEGIN_BIND_REQUEST_PROTOCOL_OP
+		case 0x63: // search request
+			s, err := br.ReadByte()
+			if err != nil {
+				return nil
+			}
+			l++
+			lop = int(s)
+			log.Printf("%x %x -- Begin the search request protocol op", b, s)
+			state = BEGIN_SEARCH_REQUEST_PROTOCOL_OP
+		case 0xa: // wholeSubtree scope
+			s, err := br.ReadByte()
+			if err != nil {
+				return nil
+			}
+			l++
+			lop -= 2 // code + length
+			opBuf := make([]byte, s)
+			// discard contents as this is only a mocking where we respond static data
+			n, err2 := br.Read(opBuf)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			lop -= n
+			log.Printf("n: %d, lop: %d", n, lop)
+			log.Printf("%x -- ", b)
+		case 0xa0: // begin an and filter
+			s, err := br.ReadByte()
+			if err != nil {
+				return nil
+			}
+			l++
+			lop -= 2 // code + length
+			log.Printf("%x %x -- Begin an and filter", b, s)
+		case 0xa3: // begin an equality filter
+			s, err := br.ReadByte()
+			if err != nil {
+				return nil
+			}
+			l++
+			lop -= 2 // code + length
+			opBuf := make([]byte, s)
+			// discard contents as this is only a mocking where we respond static data
+			n, err2 := br.Read(opBuf)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			lop -= n
+			log.Printf("n: %d, lop: %d", n, lop)
+			log.Printf("%x %x -- Begin an equality filter: %s", b, s, string(opBuf))
+		case 0x87: // present filter
+			s, err := br.ReadByte()
+			if err != nil {
+				return nil
+			}
+			l++
+			lop -= 2 // code + length
+			opBuf := make([]byte, s)
+			// discard contents as this is only a mocking where we respond static data
+			n, err2 := br.Read(opBuf)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			lop -= n
+			log.Printf("n: %d, lop: %d", n, lop)
+			log.Printf("%x %x -- Present filter: %s", b, s, string(opBuf))
+		case 0x01: // typesOnly flag
+			log.Printf("lop: %d", lop)
+			s, err := br.ReadByte()
+			if err != nil {
+				return err
+			}
+			l++
+			lop -= 2 // code + length
+			opBuf := make([]byte, s)
+			// discard contents as this is only a mocking where we respond static data
+			n, err2 := br.Read(opBuf)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			lop -= n
+			log.Printf("n: %d, lop: %d", n, lop)
+		case 0x04: // octet string
+			log.Printf("lop: %d", lop)
+			s, err := br.ReadByte()
+			if err != nil {
+				return err
+			}
+			l++
+			lop -= 2 // code + length
+			opBuf := make([]byte, s)
+			// discard contents as this is only a mocking where we respond static data
+			n, err2 := br.Read(opBuf)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			lop -= n
+			log.Printf("n: %d, lop: %d", n, lop)
+			// complete op read?
+			if lop <= 0 {
+				switch state {
+				case BEGIN_BIND_REQUEST_PROTOCOL_OP:
+					log.Printf("%x %x %x -- Bind DN", b, s, opBuf)
+					return MockBindResponse(br, bw)
+				case BEGIN_SET_OF_REQUESTED_ATTRIBUTES:
+					return MockSearchResponse(br, bw)
+				default:
+					return fmt.Errorf("ERROR: Unknown state %d", state)
+				}
+			}
+		case 0x80:
+			log.Printf("lop: %d", lop)
+			s, err := br.ReadByte()
+			if err != nil {
+				return err
+			}
+			l++
+			lop -= 2 // code + length
+			opBuf := make([]byte, s)
+			// discard contents as this is only a mocking where we respond static data
+			n, err2 := br.Read(opBuf)
+			if err2 != nil {
+				return err2
+			}
+			l += n
+			lop -= n
+			log.Printf("n: %d, lop: %d", n, lop)
+			// complete op read?
+			if lop <= 0 {
+				switch state {
+				case BEGIN_BIND_REQUEST_PROTOCOL_OP:
+					log.Printf("%x %x %x -- Empty password", b, s, opBuf)
+					return MockBindResponse(br, bw)
+				default:
+					log.Printf("ERROR: Unknown state %d", state)
+				}
+			}
+		default:
+			log.Printf("Unknown LDAP request: %x %d/%d", b, l, msgLen)
+			// no msgLen set. Can happen, if new LDAPMessage Sequence came in.
+			if msgLen == math.MaxInt {
+				return fmt.Errorf("Unknown LDAPMessage sequence %x", b)
+			}
+			return fmt.Errorf("Unknown LDAP request: %x", b)
+		}
+	}
+	return nil
+}
+
+// mocks a search result entry. Generated by ChatGPT.
+func buildSearchResultEntry(messageID int) *ber.Packet {
+	dn := "cn=alice,dc=example,dc=com"
+
+	attrName := ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "cn", "Attribute Name")
+	attrValue := ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "alice", "Attribute Value")
+	attrSet := ber.NewSequence("Attribute Value Set")
+	attrSet.AppendChild(attrValue)
+
+	partialAttribute := ber.NewSequence("PartialAttribute")
+	partialAttribute.AppendChild(attrName)
+	partialAttribute.AppendChild(attrSet)
+
+	attributes := ber.NewSequence("Attributes")
+	attributes.AppendChild(partialAttribute)
+
+	searchResultEntry := ber.NewSequence("SearchResultEntry")
+	searchResultEntry.Tag = ber.Tag(4) // APPLICATION 4
+	searchResultEntry.ClassType = ber.ClassApplication
+	searchResultEntry.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, dn, "ObjectName"))
+	searchResultEntry.AppendChild(attributes)
+
+	message := ber.NewSequence("LDAPMessage")
+	message.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, messageID, "Message ID"))
+	message.AppendChild(searchResultEntry)
+	return message
+}
+
+// mocks a search result done. Generated by ChatGPT.
+func buildSearchResultDone(messageID int) *ber.Packet {
+	searchResultDone := ber.NewSequence("SearchResultDone")
+	searchResultDone.Tag = ber.Tag(5) // APPLICATION 5
+	searchResultDone.ClassType = ber.ClassApplication
+	searchResultDone.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, 0, "resultCode (success)"))
+	searchResultDone.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "matchedDN"))
+	searchResultDone.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "diagnosticMessage"))
+
+	message := ber.NewSequence("LDAPMessage")
+	message.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, messageID, "Message ID"))
+	message.AppendChild(searchResultDone)
+	return message
+}
+
+// sends LDAP response packets. Generated by ChatGPT.
+func sendLDAPResponse(w *bufio.Writer, packets ...*ber.Packet) error {
+	for _, packet := range packets {
+		_, err := w.Write(packet.Bytes())
+		if err != nil {
+			return err
+		}
+		err = w.Flush()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func MockSearchResponse(br *bufio.Reader, bw *bufio.Writer) error {
+	// build the LDAP Search Response packet, see https://ldap.com/ldapv3-wire-protocol-reference-search/
+	entry := buildSearchResultEntry(2)
+	done := buildSearchResultDone(2)
+	err := sendLDAPResponse(bw, entry, done)
+	if err != nil {
+		return err
+	}
+	return io.EOF // signal we have done
 }
 
 func MockBindResponse(br *bufio.Reader, bw *bufio.Writer) error {

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"strconv"
@@ -91,13 +92,13 @@ func Connect(config *Config) (*ldap.Conn, error) {
 // SearchMode make search to LDAP and return results.
 func SearchMode(conn *ldap.Conn, config *Config) (*ldap.SearchResult, error) {
 	if config.BindDN != "" && config.BindPassword != "" {
-		// LoggerDEBUG.Printf("Performing User BindDN Search")
+		log.Printf("Performing User BindDN Search")
 		err := conn.Bind(config.BindDN, config.BindPassword)
 		if err != nil {
 			return nil, fmt.Errorf("BindDN Error: %w", err)
 		}
 	} else {
-		// LoggerDEBUG.Printf("Performing AnonymousBind Search")
+		log.Printf("Performing AnonymousBind Search")
 		_ = conn.UnauthenticatedBind("")
 	}
 

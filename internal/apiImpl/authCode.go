@@ -3,8 +3,10 @@ package archonauth
 import (
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -12,6 +14,7 @@ import (
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
 	"github.com/pp23/ldapAuth/internal/utils"
+	"github.com/pp23/ldapAuth/pkg/mapper"
 )
 
 // ResponseAuthCode responses with an auth code
@@ -114,6 +117,8 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		}
 		defer conn.Close()
 
+		// entry is the LDAP user entry
+		auth.Auth.config.Ldap.SearchFilter = "(&(cn=" + username + ")(objectClass=*))" // search for the user and all its attributes
 		isValidUser, entry, err := ldapIdp.LdapCheckUser(conn, auth.Auth.config.Ldap, username, password)
 
 		if !isValidUser {
@@ -124,15 +129,29 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		isAuthorized, err := ldapIdp.LdapCheckUserAuthorized(conn, auth.Auth.config.Ldap, entry, username)
-		if !isAuthorized {
-			defer conn.Close()
-			l.ERROR.Printf("%s", err)
-			RequireAuth(rw, req, auth.Auth.config.Ldap, l, err)
-			return
+		// since we have the user entry already, let's map the keys to claims
+		l.INFO.Printf("LDAP-Entry: %v", entry.Attributes)
+		l.INFO.Printf("LDAP-Entry: DN: %s", entry.DN)
+		l.INFO.Printf("LDAP-Entry cn: %s", entry.GetAttributeValue("cn"))
+		entry.Print()
+		for _, attribute := range entry.Attributes {
+			l.INFO.Printf("LDAP attribute: %s = %v", attribute.Name, attribute.Values)
 		}
+		// Load the mappers from the clients config
+		keyClaimMapping := LdapClaimMapperFromConfig(client.IdpClaimMappers)
+		// initialize the claimMapper with the Key/Values from the IdP
+		claimMapper := &mapper.SequentialMapper[string, any]{
+			// iterator over key-values of LDAP entry
+			KVIter: LdapAttributesToMap(slices.Values(entry.Attributes)),
+			ErrorFn: func(err error, key string, value any) bool {
+				// true: ignore error
+				return true
+			},
+		}
+		// do the mapping
+		jwtClaims := claimMapper.Map(keyClaimMapping.LdapKeyJWTClaimMapFn)
 
-		l.INFO.Printf("Authentication succeeded")
+		l.INFO.Printf("Authentication succeeded: %s", strings.Join(slices.Collect(maps.Keys(maps.Collect(jwtClaims))), ","))
 
 		// rfc6749 4.1.2
 		// auth code added as query parameter to the redirection URI using "application/x-www-form-urlencoded" format
@@ -149,9 +168,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 		code, err := authCodeRequest.Code() // TODO: generate valid auth code with code_challenge encrypted in it
 		// TODO: cache auth code together with client
 		// we use memcached as it is easy to use, efficient and has no complex license
-		// as we store authcodes and tokens, it would be ok
-		// if the client needs to reauthenticate
-		// if memcached failed to return the authcode/token due to internal error
+		// it would be ok if the client needs to reauthenticate in case memcached failed to return the authcode/token
 		data, gobErr := encodeToBytes(authCodeRequest)
 		if gobErr != nil {
 			log.Print(gobErr)

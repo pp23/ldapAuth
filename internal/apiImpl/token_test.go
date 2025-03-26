@@ -9,10 +9,34 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
+	archonauth "github.com/pp23/ldapAuth/internal/apiImpl"
 	"github.com/pp23/ldapAuth/internal/server"
 	"github.com/pp23/ldapAuth/internal/test"
 )
+
+type MapMarshaler struct{}
+
+func (m *MapMarshaler) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]string{
+		"uid": "test",
+	})
+}
+
+func TestNewJWTClaims(t *testing.T) {
+	claims := archonauth.NewMappedJWTClaimsWithDefaults(&MapMarshaler{})
+
+	t.Logf("Claims: %v", claims)
+	jwt := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	s, _ := jwt.SigningString()
+	t.Logf("JWT: %v", s)
+	if j, e := json.Marshal(claims); e == nil {
+		t.Logf("JSON: %v", string(j))
+	} else {
+		t.Logf("ERROR: %v", e)
+	}
+}
 
 // exchange an auth code with an access token
 // as we want to use the phantom token approach, the access token must not include structured data
@@ -66,7 +90,7 @@ func TestOpaqueTokenResponseSuccess(t *testing.T) {
 		defer wg.Done()
 		mockLdapServer.Run(
 			1389,
-			test.MockBindResponse,
+			test.MockLdapResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()
@@ -181,7 +205,7 @@ func TestJWTTokenSuccess(t *testing.T) {
 		defer wg.Done()
 		mockLdapServer.Run(
 			1389,
-			test.MockBindResponse,
+			test.MockLdapResponse,
 			func(err error) { t.Error("Error: ", err) /* t.Error() causes the test to fail */ },
 		)
 	}()

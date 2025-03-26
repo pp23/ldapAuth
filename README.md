@@ -2,6 +2,36 @@
 
 A full file based configurable authorization server with a LDAP IdP backend.
 
+## Design
+
+### Mappers
+
+Mappers define a mapping of input key/values to output key/values.
+Archonauth allows to use different types of mappers based on the available implementations per Idp and client.
+
+A mapper implementation defines a mapping function that takes key/value pairs from the IdP as input and outputs client specific key/value pairs.
+Mapper functions must have the same input and output datatypes. This requirement allows to chain mapper functions.
+With that, the output of a previous mapper function is the input of the current mapper function.
+
+Mapper functions can be configured in the client config. Since mapper functions can be chained, each list element represents a mapping function of the mapping chain.
+The functions get called per Key/Value pair in the mapping configuration list order.
+
+Example:
+
+```
+oauth2:
+  clients:
+  - client_id: "client"
+    [...]
+    mappers:
+    - keys:
+        cn: "uid"
+```
+
+The example above maps the LDAP attribute `cn` of the authenticated user
+to the key `uid` in the JWT when the client with the client_id `client`
+gets requested.
+
 ## Development
 
 ### Testing
