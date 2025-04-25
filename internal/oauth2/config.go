@@ -1,6 +1,8 @@
 package oauth2
 
 import (
+	"encoding/gob"
+
 	"github.com/pp23/ldapAuth/internal/provider"
 	"github.com/pp23/ldapAuth/pkg/mapper"
 )
@@ -24,7 +26,14 @@ type Config struct {
 }
 
 func CreateConfig() *Config {
+	ConfigureGob()
 	return &Config{
 		Clients: []*OAuth2Client{},
 	}
+}
+
+// Register OAuth2 structs in gob
+func ConfigureGob() {
+	gob.Register(AuthCode{})
+	gob.Register(OpaqueToken{})
 }

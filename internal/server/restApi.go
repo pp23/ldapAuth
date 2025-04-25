@@ -2,7 +2,6 @@ package server
 
 import (
 	"crypto/rand"
-	"encoding/gob"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/go-chi/chi/v5"
@@ -11,7 +10,6 @@ import (
 	"github.com/pp23/ldapAuth/internal/api"
 	archonauth "github.com/pp23/ldapAuth/internal/apiImpl"
 	"github.com/pp23/ldapAuth/internal/config"
-	"github.com/pp23/ldapAuth/internal/oauth2"
 	"github.com/pp23/ldapAuth/internal/utils"
 )
 
@@ -30,8 +28,6 @@ func NewAuthApi(idp *archonauth.LdapAuth, logger *utils.Logger, config *config.C
 		return nil, err
 	}
 
-	gob.Register(oauth2.AuthCode{})
-	gob.Register(oauth2.OpaqueToken{})
 	store = sessions.NewCookieStore([]byte(config.Ldap.CacheKey), encKey)
 	store.Options = &sessions.Options{
 		HttpOnly: true,
