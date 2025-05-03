@@ -22,8 +22,9 @@ import "fmt"
 
 // The Provider-Interface functions call the funtions of the selected, thus configured, provider.
 type ProviderSelector struct {
-	File  *FileProvider  `json:"file,omitempty" yaml:"file,omitempty"`
-	Value *ValueProvider `json:"value,omitempty" yaml:"value,omitempty"`
+	File        *FileProvider   `json:"file,omitempty" yaml:"file,omitempty"`
+	Value       *ValueProvider  `json:"value,omitempty" yaml:"value,omitempty"`
+	Environment *EnvVarProvider `json:"env,omitempty" yaml:"env,omitempty"`
 
 	// gets set when Open() called and represents the configured provider
 	selectedProvider Provider
@@ -36,6 +37,9 @@ func (ps *ProviderSelector) Open() error {
 	}
 	if ps.Value != nil {
 		ps.selectedProvider = ps.Value
+	}
+	if ps.Environment != nil {
+		ps.selectedProvider = ps.Environment
 	}
 	if ps.selectedProvider == nil {
 		return fmt.Errorf("No known provider found in configuration")
