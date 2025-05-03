@@ -34,6 +34,8 @@ func CreateConfig() *Config {
 
 // Register OAuth2 structs in gob
 func ConfigureGob() {
+	gob.Register(JWTClaims{})
+	gob.Register(JWTPrivateClaims{})
 	gob.Register(AuthCode{})
 	gob.Register(OpaqueToken{})
 }

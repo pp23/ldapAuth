@@ -66,6 +66,9 @@ func (ep *EncryptionProvider) Close() error {
 
 // Encrypts the given plaintext according to the provided configuration paramaters. Returns an empty result on error. Prepends the used nonce to the ciphertext.
 func (ep *EncryptionProvider) Encrypt(plaintext []byte) ([]byte, error) {
+	if len(ep.nonce) <= 0 {
+		return []byte{}, fmt.Errorf("EncryptionProvider.nonce not initialized. Have you called Open() before?")
+	}
 	// generate a new nonce. never use the same nonce with the same key!
 	if _, err := io.ReadFull(rand.Reader, ep.nonce); err != nil {
 		return []byte{}, err

@@ -15,3 +15,7 @@ oauth2:
             cn: "uid"
 cache:
   host: "memcached:11211"
+  encryption:
+    secret:
+      env:
+        key: "CACHE_ENC_KEY"

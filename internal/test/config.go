@@ -2,7 +2,12 @@ package test
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
+
+	"github.com/pp23/ldapAuth/internal/config"
+	"github.com/pp23/ldapAuth/internal/oauth2"
+	"github.com/pp23/ldapAuth/internal/provider"
 )
 
 type TestConfig struct {
@@ -28,4 +33,34 @@ func TestConfigFromEnv() (TestConfig, error) {
 		return cfg, fmt.Errorf("%s not set", testUsernameEnvKey)
 	}
 	return cfg, nil
+}
+
+func CreateConfig() *config.Config {
+	cfg := config.CreateConfig()
+	cfg.OAuth2.Clients = append(cfg.OAuth2.Clients, &oauth2.OAuth2Client{
+		ClientId:    "abc",
+		RedirectUri: "https://localhost:1234/token",
+		ClientSecret: &provider.ProviderSelector{
+			File: &provider.FileProvider{
+				Path: "/tmp/testClientCredentials.txt",
+			},
+		},
+	})
+	return cfg
+}
+
+// Creates a Cache.Encryption provider with the given secret key (32byte for AES256). If key is empty, a random byte-array will be generated.
+func CreateCacheEncryptionConfig(key []byte) *provider.EncryptionProvider {
+	cacheEncKey := key
+	if len(key) <= 0 {
+		cacheEncKey = make([]byte, 32) // 32 bytes required for AES256
+		rand.Read(cacheEncKey)
+	}
+	return &provider.EncryptionProvider{
+		Secret: &provider.ProviderSelector{
+			Value: &provider.ValueProvider{
+				Value: string(cacheEncKey),
+			},
+		},
+	}
 }

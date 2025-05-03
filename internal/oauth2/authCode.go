@@ -27,6 +27,9 @@ type AuthCode struct {
 	Scope         string
 	State         string
 	CodeChallenge string
+	// Since we access the IdP entry already with the auth code, it is worth to cache the private claims
+	// (cache encryption will be used if configured)
+	JWTClaims []byte // gob-encoded oauth2.JWTPrivateClaims
 }
 
 // Test whether this request is an auth code request

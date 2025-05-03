@@ -1,52 +1,16 @@
 package archonauth
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/golang-jwt/jwt/v5"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/pp23/ldapAuth/internal/ldapIdp"
 	"github.com/pp23/ldapAuth/internal/oauth2"
 )
-
-// allows to define arbitrary JSON in the JWT below the "d"-key
-type JWTMapper json.Marshaler
-
-type JWTClaims struct {
-	Data JWTMapper `json:"d,omitempty"`
-	*jwtv5.RegisteredClaims
-}
-
-// JWT claims with mapper function
-func NewMappedJWTClaims(jwtMapper JWTMapper, registeredClaims *jwt.RegisteredClaims) jwt.Claims {
-	// TODO: Add user data like its role to the JWT
-	// TODO: Add user data that the client requires and the resource owner granted to be read by the client
-	return &JWTClaims{
-		jwtMapper,
-		registeredClaims,
-	}
-}
-
-// JWT claims with mapper function and default registered claims
-func NewMappedJWTClaimsWithDefaults(jwtMapper JWTMapper) jwt.Claims {
-	// TODO: Add user data like its role to the JWT
-	// TODO: Add user data that the client requires and the resource owner granted to be read by the client
-	return &JWTClaims{
-		jwtMapper,
-		&jwtv5.RegisteredClaims{
-			ExpiresAt: jwtv5.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwtv5.NewNumericDate(time.Now()),
-			NotBefore: jwtv5.NewNumericDate(time.Now()),
-			Issuer:    "",
-			Subject:   "",
-		},
-	}
-}
 
 // responses with a bearer token
 func ResponseToken(w http.ResponseWriter, req *http.Request, config *ldapIdp.Config, token []byte) error {
@@ -82,11 +46,26 @@ func (auth *AuthAPI) PostToken(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// deserialize the cached data into an oauth2.AuthCode
-	_, gobErr := decodeFromBytes[oauth2.AuthCode](item.Value)
+	authCodeData, gobErr := decodeFromBytes[oauth2.AuthCode](item.Value)
 	if gobErr != nil {
 		l.ERROR.Printf("opaqueTokenRequest decoding error: %v", gobErr)
 		RequireAuth(rw, req, auth.Auth.config.Ldap, l, gobErr)
 		return
+	}
+	var privateJWTClaims *oauth2.JWTPrivateClaims
+	if auth.Auth.config.Cache.Encryption != nil {
+		plainJWTClaims, decryptErr := auth.Auth.config.Cache.Encryption.Decrypt(authCodeData.JWTClaims)
+		if decryptErr != nil {
+			l.ERROR.Printf("opaque token error: Could not decrypt JWT claims from cache: %v", decryptErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, l, decryptErr)
+			return
+		}
+		var decodeErr error
+		if privateJWTClaims, decodeErr = decodeFromBytes[oauth2.JWTPrivateClaims](plainJWTClaims); decodeErr != nil {
+			l.ERROR.Printf("opaque token error: Could not decode JWT claims from cache: %v", decodeErr)
+			RequireAuth(rw, req, auth.Auth.config.Ldap, l, decodeErr)
+			return
+		}
 	}
 	// TODO: Check PKCE encoded in the authCode with that from the request
 	// TODO: Check client credentials and authenticate the client
@@ -115,7 +94,7 @@ func (auth *AuthAPI) PostToken(rw http.ResponseWriter, req *http.Request) {
 	// start a user session
 	// creates a JWT and store it in the cache until it gets deleted by logout of the user or expiration
 	// create JWT
-	claims := NewMappedJWTClaimsWithDefaults(nil)
+	claims := oauth2.NewMappedJWTClaimsWithDefaults(privateJWTClaims)
 	jwt := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	ss, jwtErr := jwt.SignedString([]byte("TODO"))
 	if jwtErr != nil {

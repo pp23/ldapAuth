@@ -1,6 +1,7 @@
 package archonauth
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log"
 	"maps"
@@ -149,9 +150,26 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 			},
 		}
 		// do the mapping
-		jwtClaims := claimMapper.Map(keyClaimMapping.LdapKeyJWTClaimMapFn)
+		jwtClaims := oauth2.JWTPrivateClaims(maps.Collect(claimMapper.Map(keyClaimMapping.LdapKeyJWTClaimMapFn)))
+		plainJwtClaims, jwtClaimsEncErr := encodeToBytes(jwtClaims)
+		if jwtClaimsEncErr != nil {
+			l.ERROR.Printf("Could not gob-encode JWT Private Claims: %v", jwtClaimsEncErr)
+			// TODO: Respond error
+			return
+		}
+		if auth.Auth.config.Cache.Encryption != nil {
+			authCodeRequest.JWTClaims, jwtClaimsEncErr = auth.Auth.config.Cache.Encryption.Encrypt(plainJwtClaims)
+			if jwtClaimsEncErr != nil {
+				l.ERROR.Printf("Could not encrypt gob-encoded JWT Private Claims: %v", jwtClaimsEncErr)
+				// TODO: Respond error
+				return
+			}
+		} else {
+			// no cache encryption configured, continue with plain JWT claims
+			authCodeRequest.JWTClaims = plainJwtClaims
+		}
 
-		l.INFO.Printf("Authentication succeeded: %s", strings.Join(slices.Collect(maps.Keys(maps.Collect(jwtClaims))), ","))
+		l.INFO.Printf("Authentication succeeded: %s", strings.Join(slices.Collect(maps.Keys(jwtClaims)), ","))
 
 		// rfc6749 4.1.2
 		// auth code added as query parameter to the redirection URI using "application/x-www-form-urlencoded" format
@@ -174,6 +192,7 @@ func (auth *AuthAPI) GetAuth(rw http.ResponseWriter, req *http.Request) {
 			log.Print(gobErr)
 			// TODO: Response error
 		}
+		l.DEBUG.Printf("AuthCode Cache data: %s", hex.Dump(data))
 		errCache := auth.Cache.Set(&memcache.Item{
 			Key:   "code" + code,
 			Value: data,

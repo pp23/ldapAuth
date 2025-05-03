@@ -15,25 +15,9 @@ import (
 	"github.com/pp23/ldapAuth/internal/api"
 	archonauth "github.com/pp23/ldapAuth/internal/apiImpl"
 	"github.com/pp23/ldapAuth/internal/config"
-	"github.com/pp23/ldapAuth/internal/oauth2"
-	"github.com/pp23/ldapAuth/internal/provider"
 	"github.com/pp23/ldapAuth/internal/server"
 	"github.com/pp23/ldapAuth/internal/utils"
 )
-
-func CreateConfig() *config.Config {
-	cfg := config.CreateConfig()
-	cfg.OAuth2.Clients = append(cfg.OAuth2.Clients, &oauth2.OAuth2Client{
-		ClientId:    "abc",
-		RedirectUri: "https://localhost:1234/token",
-		ClientSecret: &provider.ProviderSelector{
-			File: &provider.FileProvider{
-				Path: "/tmp/testClientCredentials.txt",
-			},
-		},
-	})
-	return cfg
-}
 
 func NewAuthApi(cfg *config.Config, t *testing.T) *archonauth.AuthAPI {
 	ctx := context.Background()

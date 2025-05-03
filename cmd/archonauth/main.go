@@ -20,6 +20,14 @@ const (
 	DEFAULT_CONFIG_FILE = "/etc/archonauth/config.yaml"
 )
 
+// Calls close and prints out all errors that occurred
+func finalClose(ldapAuth *archonauth.LdapAuth, log *utils.Logger) {
+	errs := ldapAuth.Close()
+	for err := range errs {
+		log.ERROR.Printf("ERROR: Archonauth could not be shut down cleanly: %v", err)
+	}
+}
+
 func main() {
 	ctx := context.Background()
 	logger := utils.NewLogger()
@@ -44,13 +52,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer finalClose(ldapAuth, logger)
 	authApi, errApi := server.NewAuthApi(ldapAuth, logger, cfg)
 	if errApi != nil {
+		finalClose(ldapAuth, logger)
 		log.Fatal(errApi)
 	}
 	logger.INFO.Printf("Starting server on %s:%d", cfg.Address, cfg.Port)
 	errServer := http.ListenAndServe(cfg.Address+":"+strconv.Itoa(int(cfg.Port)), server.NewChiRouter(authApi))
 	if errServer != nil {
+		finalClose(ldapAuth, logger)
 		log.Fatal(errServer)
 	}
 }
